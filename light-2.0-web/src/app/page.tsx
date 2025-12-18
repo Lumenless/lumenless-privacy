@@ -61,7 +61,7 @@ export default function Home() {
           >
             <Image
               src="/logo.svg"
-              alt="Light Logo"
+              alt="Lumenless Logo"
               width={120}
               height={120}
               priority
@@ -93,7 +93,7 @@ export default function Home() {
                 paddingBottom: '0.2em',
               }}
             >
-              Light 2.0
+              Lumenless
             </motion.span>
           </motion.h1>
 
@@ -139,7 +139,7 @@ export default function Home() {
             className="flex items-center justify-center gap-4 pt-8"
           >
             <motion.a
-              href="https://x.com/lightdotapp"
+              href="https://x.com/lumenless"
               target="_blank"
               rel="noopener noreferrer"
               whileHover={{ scale: 1.1 }}
@@ -181,7 +181,7 @@ export default function Home() {
         transition={{ duration: 0.6, delay: 0.5 }}
         className="relative z-10 pb-8 text-center text-sm text-muted-foreground"
       >
-        <p>© 2025 Light. All rights reserved.</p>
+        <p>© 2025 Lumenless. All rights reserved.</p>
       </motion.footer>
     </div>
   );

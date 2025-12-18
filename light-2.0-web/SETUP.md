@@ -1,6 +1,6 @@
-# Light Waitlist Setup Guide
+# Lumenless Waitlist Setup Guide
 
-This guide will help you set up the Light waitlist website with Supabase integration.
+This guide will help you set up the Lumenless waitlist website with Supabase integration.
 
 ## Prerequisites
 

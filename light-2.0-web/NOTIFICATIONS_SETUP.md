@@ -132,7 +132,7 @@ curl -X POST "https://your-project-ref.supabase.co/functions/v1/notify-waitlist"
 ```bash
 curl -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage" \
   -H "Content-Type: application/json" \
-  -d '{"chat_id":"YOUR_CHAT_ID","text":"Test message from Light Waitlist! 🎉"}'
+  -d '{"chat_id":"YOUR_CHAT_ID","text":"Test message from Lumenless Waitlist! 🎉"}'
 ```
 
 Or just add a test email to your waitlist form!

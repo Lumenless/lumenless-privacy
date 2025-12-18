@@ -193,8 +193,8 @@ function SendSolView() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 md:px-8 py-4">
         <div className="flex items-center gap-2">
-          <Image src="/logo.svg" alt="Light Logo" width={36} height={36} />
-          <span className="font-semibold text-lg">Light</span>
+          <Image src="/logo.svg" alt="Lumenless Logo" width={36} height={36} />
+          <span className="font-semibold text-lg">Lumenless</span>
         </div>
         <div className="flex items-center gap-3">
           {connected ? (
@@ -231,7 +231,7 @@ function SendSolView() {
         <Card className="w-full max-w-2xl p-6 border border-border shadow-xl">
           <h2 className="text-sm font-medium text-muted-foreground mb-2">Sending privately</h2>
           <p className="text-sm text-muted-foreground mb-6">
-            Light 2.0 works on Solana Devnet{' '}<a className="underline" href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer">Faucet here</a>.
+            Lumenless works on Solana Devnet{' '}<a className="underline" href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer">Faucet here</a>.
           </p>
 
           <div className="space-y-6">
