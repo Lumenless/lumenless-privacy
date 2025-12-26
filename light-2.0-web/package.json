@@ -11,7 +11,9 @@
   "dependencies": {
     "@arcium-hq/client": "^0.3.0",
     "@arcium-hq/reader": "^0.3.0",
+    "@bonfida/sns-react": "^3.1.3",
     "@radix-ui/react-slot": "^1.2.3",
+    "@tanstack/react-query": "^5.0.0",
     "@solana/wallet-adapter-backpack": "^0.1.14",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-phantom": "^0.9.28",
