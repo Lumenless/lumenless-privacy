@@ -1,16 +1,19 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { clusterApiUrl, PublicKey } from '@solana/web3.js';
+import { clusterApiUrl, PublicKey, Transaction } from '@solana/web3.js';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ConnectionProvider, WalletProvider, useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack';
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useDomainsForOwner } from '@bonfida/sns-react';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { useDomainsForOwner, useDeserializedRecords } from '@bonfida/sns-react';
+import { Record, updateRecordV2Instruction, createRecordV2Instruction } from '@bonfida/spl-name-service';
 import '@solana/wallet-adapter-react-ui/styles.css';
 
 export default function AppPage() {
@@ -54,26 +57,279 @@ export default function AppPage() {
   );
 }
 
-function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
+interface EditSolRecordModalProps {
+  visible: boolean;
+  onClose: () => void;
+  domain: string;
+  currentAddress: string | null;
+  onSuccess: () => void;
+}
+
+function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSuccess }: EditSolRecordModalProps) {
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
+  const queryClient = useQueryClient();
+  const [newAddress, setNewAddress] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [successTx, setSuccessTx] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Close modal when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+
+    if (visible) {
+      document.addEventListener('mousedown', handleClickOutside);
+      setNewAddress(currentAddress || '');
+      setError(null);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [visible, currentAddress, onClose]);
+
+  const handleSave = useCallback(async () => {
+    if (!publicKey || !newAddress.trim()) {
+      setError('Please enter a valid Solana address');
+      return;
+    }
+
+    let recipientPubkey: PublicKey;
+    try {
+      recipientPubkey = new PublicKey(newAddress.trim());
+    } catch {
+      setError('Invalid Solana address format');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setError(null);
+
+      const transaction = new Transaction();
+
+      // Create or update the record instruction based on whether it exists
+      const recordExists = currentAddress && currentAddress.trim() !== '';
+      console.log('!!! Current address:', currentAddress);
+      console.log('!!! Record exists:', recordExists);
+    //   if (!recordExists) {
+        console.log('!!! Create record instruction');
+        transaction.add(createRecordV2Instruction(
+          domain,
+          Record.SOL,
+          recipientPubkey.toBase58(), // The content is the address as a string
+          publicKey, // owner
+          publicKey  // payer
+        ));
+    //   } 
+
+    //   console.log('!!! Update record instruction');
+    //   transaction.add(updateRecordV2Instruction(
+    //     domain,
+    //     Record.SOL,
+    //     recipientPubkey.toBase58(), // The content is the address as a string
+    //     publicKey, // owner
+    //     publicKey  // payer
+    //   ));
+
+      
+      // Create and send transaction
+      transaction.feePayer = publicKey;
+
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+
+      const signature = await sendTransaction(transaction, connection, { skipPreflight: false });
+      
+      // Wait for confirmation
+      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+
+      setSuccessTx(signature);
+
+      // Invalidate the query to refetch the record
+      queryClient.invalidateQueries({ queryKey: ['useDeserializedRecords', connection.rpcEndpoint, domain, [Record.SOL]] });
+
+      // Wait a bit before closing to show success
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+        setNewAddress('');
+        setSuccessTx(null);
+      }, 1500);
+    } catch (err: unknown) {
+      console.error('Error updating SOL record:', err);
+      setError(err instanceof Error ? err.message : 'Failed to update record. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [publicKey, newAddress, domain, connection, sendTransaction, queryClient, onSuccess, onClose]);
+
+  if (!visible) return null;
+
   return (
-    <div className="rounded-lg border border-border bg-card/50 p-4 flex items-center justify-between hover:bg-card/80 transition-colors">
-      <div className="flex flex-col">
-        <span className="font-medium text-lg">
-          {domain}.sol
-        </span>
-        <span className="text-xs text-muted-foreground font-mono mt-1">
-          {pubkey.toBase58()}
-        </span>
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      
+      {/* Modal */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <Card ref={modalRef} className="w-full max-w-md p-6 bg-white shadow-xl">
+          <h3 className="text-lg font-semibold mb-4">Edit Fund Receiving Address</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Update the SOL receiving address for <strong>{domain}.sol</strong>
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">New Solana Address</label>
+              <Input
+                type="text"
+                placeholder="Enter Solana wallet address"
+                value={newAddress}
+                onChange={(e) => {
+                  setError(null);
+                  setNewAddress(e.target.value);
+                }}
+                className={error ? 'border-destructive' : ''}
+                disabled={isProcessing}
+              />
+              {error && (
+                <p className="text-xs text-destructive mt-1">{error}</p>
+              )}
+              {successTx && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <p className="text-green-800 font-medium">✓ Record updated successfully!</p>
+                  <a
+                    href={`https://solscan.io/tx/${successTx}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-green-600 hover:underline mt-1 inline-block"
+                  >
+                    View transaction →
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isProcessing}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSave}
+                disabled={isProcessing || !newAddress.trim()}
+              >
+                {isProcessing ? 'Processing...' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        </Card>
       </div>
-      <a
-        href={`https://solscan.io/account/${pubkey.toBase58()}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-sm text-primary hover:underline"
-      >
-        View →
-      </a>
-    </div>
+    </>
+  );
+}
+
+function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
+  const { connection } = useConnection();
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  
+  // Fetch the SOL record (fund receiving address) for this domain
+  const solRecord = useDeserializedRecords(
+    connection,
+    domain,
+    [Record.SOL] // Record.SOL contains the fund receiving address
+  );
+  console.log('!!!', 'domain:', domain, 'SOL record:', solRecord.data);
+
+  const handleEditSuccess = useCallback(() => {
+    // The query will be invalidated by the modal, but we can also refetch here
+    solRecord.refetch();
+  }, [solRecord]);
+
+  return (
+    <>
+      <div className="rounded-lg border border-border bg-card/50 p-4 hover:bg-card/80 transition-colors">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex flex-col flex-1">
+            <span className="font-medium text-lg">
+              {domain}.sol
+            </span>
+            <span className="text-xs text-muted-foreground font-mono mt-1">
+              Domain: {pubkey.toBase58()}
+            </span>
+          </div>
+          <a
+            href={`https://solscan.io/account/${pubkey.toBase58()}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-primary hover:underline ml-4"
+          >
+            View →
+          </a>
+        </div>
+        
+        {/* Records Section */}
+        <div className="mt-3 pt-3 border-t border-border">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Fund Receiving Address (SOL):</span>
+              <div className="flex items-center gap-2">
+                {solRecord.isLoading && (
+                  <span className="text-xs text-muted-foreground">Loading...</span>
+                )}
+                {solRecord.error && (
+                  <span className="text-xs text-destructive">Error loading</span>
+                )}
+                {!solRecord.isLoading && !solRecord.error && solRecord.data && solRecord.data[0] && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-foreground">
+                      {solRecord.data[0]}
+                    </span>
+                    <a
+                      href={`https://solscan.io/account/${solRecord.data[0]}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-primary hover:underline"
+                    >
+                      ↗
+                    </a>
+                  </div>
+                )}
+                {!solRecord.isLoading && !solRecord.error && (!solRecord.data || !solRecord.data[0]) && (
+                  <span className="text-xs text-muted-foreground italic">Not set</span>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditModalVisible(true)}
+                  className="text-xs h-7 px-2"
+                >
+                  Edit
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <EditSolRecordModal
+        visible={editModalVisible}
+        onClose={() => setEditModalVisible(false)}
+        domain={domain}
+        currentAddress={solRecord.data?.[0] || null}
+        onSuccess={handleEditSuccess}
+      />
+    </>
   );
 }
 
@@ -97,8 +353,10 @@ function DomainsView() {
         console.log('Domains Found:', domains.data.length);
         console.log('Domains List:');
         domains.data.forEach((domainItem: { domain: string; pubkey: PublicKey }, index: number) => {
-          console.log(`  ${index + 1}. ${domainItem.domain}.sol (${domainItem.pubkey.toBase58()})`);
+          console.log(`  ${index + 1}. ${domainItem.domain}.sol`);
+          console.log(`     Domain Account: ${domainItem.pubkey.toBase58()}`);
         });
+        console.log('Note: Fund receiving addresses (SOL records) are loaded per domain below.');
       } else if (!domains.isLoading && !domains.error) {
         console.log('No domains found for this wallet');
       }
