@@ -11,7 +11,7 @@ import { getDefaultConfig } from '@solana/connector/headless';
 import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useDomainsForOwner, useDeserializedRecords } from '@bonfida/sns-react';
-import { Record, updateRecordV2Instruction, createRecordV2Instruction } from '@bonfida/spl-name-service';
+import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content } from '@bonfida/spl-name-service';
 import { WalletButton } from '@/components/WalletButton';
 
 export default function AppPage() {
@@ -123,29 +123,54 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
 
       const transaction = new Transaction();
 
-      // Create or update the record instruction based on whether it exists
+      // Determine if record already exists
       const recordExists = currentAddress && currentAddress.trim() !== '';
-      console.log('!!! Current address:', currentAddress);
-      console.log('!!! Record exists:', recordExists);
-    //   if (!recordExists) {
-        console.log('!!! Create record instruction');
-        transaction.add(createRecordV2Instruction(
+      
+      if (recordExists) {
+        // Update existing record
+        console.log('!!! Updating existing record');
+        const updateRecordIx = updateRecordV2Instruction(
           domain,
           Record.SOL,
           recipientPubkey.toBase58(), // The content is the address as a string
           publicKey, // owner
           publicKey  // payer
-        ));
-    //   } 
-
-    //   console.log('!!! Update record instruction');
-    //   transaction.add(updateRecordV2Instruction(
-    //     domain,
-    //     Record.SOL,
-    //     recipientPubkey.toBase58(), // The content is the address as a string
-    //     publicKey, // owner
-    //     publicKey  // payer
-    //   ));
+        );
+        transaction.add(updateRecordIx);
+        
+        // Validate the updated record (staleness should be true for updates)
+        const validateRecordIx = validateRecordV2Content(
+          true, // staleness - true when updating existing record
+          domain,
+          Record.SOL,
+          publicKey, // owner
+          publicKey, // payer
+          publicKey  // verifier (same as owner)
+        );
+        transaction.add(validateRecordIx);
+      } else {
+        // Create new record
+        console.log('!!! Creating new record');
+        const createRecordIx = createRecordV2Instruction(
+          domain,
+          Record.SOL,
+          recipientPubkey.toBase58(), // The content is the address as a string
+          publicKey, // owner
+          publicKey  // payer
+        );
+        transaction.add(createRecordIx);
+        
+        // Validate the new record
+        const validateRecordIx = validateRecordV2Content(
+          false, // staleness - false for new records
+          domain,
+          Record.SOL,
+          publicKey, // owner
+          publicKey, // payer
+          publicKey  // verifier (same as owner)
+        );
+        transaction.add(validateRecordIx);
+      }
 
       
       // Create and send transaction
@@ -162,6 +187,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       const signedTransaction = await signTransaction({
         transaction: transaction.serialize({ requireAllSignatures: false }),
       });
+      console.log('!!! Signed transaction:', signedTransaction);
       
       // Send the signed transaction
       const signature = await connection.sendRawTransaction(
