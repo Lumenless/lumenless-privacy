@@ -2,38 +2,19 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { clusterApiUrl, PublicKey, Transaction } from '@solana/web3.js';
+import { clusterApiUrl, PublicKey, Transaction, VersionedTransaction, Connection } from '@solana/web3.js';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ConnectionProvider, WalletProvider, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
-import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack';
-import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
+import { AppProvider } from '@solana/connector/react';
+import { getDefaultConfig } from '@solana/connector/headless';
+import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useDomainsForOwner, useDeserializedRecords } from '@bonfida/sns-react';
 import { Record, updateRecordV2Instruction, createRecordV2Instruction } from '@bonfida/spl-name-service';
-import '@solana/wallet-adapter-react-ui/styles.css';
+import { WalletButton } from '@/components/WalletButton';
 
 export default function AppPage() {
-  // SNS domains are on mainnet, not devnet
-  // Use a custom RPC endpoint if provided via environment variable
-  // Otherwise, use the public endpoint (may be rate-limited)
-  const endpoint = useMemo(() => {
-    // Next.js bundles NEXT_PUBLIC_* env vars at build time
-    const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    if (customRpc) {
-      return customRpc;
-    }
-    // Default public endpoint (has rate limits - consider using Helius, QuickNode, etc.)
-    return clusterApiUrl('mainnet-beta');
-  }, []);
-  const wallets = useMemo(
-    () => [new PhantomWalletAdapter(), new BackpackWalletAdapter(), new SolflareWalletAdapter()],
-    []
-  );
-  
   // Create a QueryClient instance for React Query
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
@@ -44,15 +25,14 @@ export default function AppPage() {
     },
   }));
 
+  // Configure ConnectorKit
+  const config = useMemo(() => getDefaultConfig({ appName: 'Lumenless' }), []);
+
   return (
     <QueryClientProvider client={queryClient}>
-      <ConnectionProvider endpoint={endpoint} config={{ commitment: 'confirmed' }}>
-        <WalletProvider wallets={wallets} autoConnect={true}>
-          <WalletModalProvider>
-            <DomainsView />
-          </WalletModalProvider>
-        </WalletProvider>
-      </ConnectionProvider>
+      <AppProvider connectorConfig={config}>
+        <DomainsView />
+      </AppProvider>
     </QueryClientProvider>
   );
 }
@@ -66,8 +46,37 @@ interface EditSolRecordModalProps {
 }
 
 function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSuccess }: EditSolRecordModalProps) {
-  const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  // Create connection manually
+  const { connection, endpoint } = useMemo(() => {
+    const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
+    return {
+      connection: new Connection(endpoint, 'confirmed'),
+      endpoint,
+    };
+  }, []);
+
+  const { account } = useAccount();
+  const { signer } = useTransactionSigner();
+  const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
+  
+  // Create a signTransaction function compatible with the existing code
+  const signTransaction = useMemo(() => {
+    if (!signer) return null;
+    return async (params: { transaction: Uint8Array }) => {
+      const tx = Transaction.from(params.transaction);
+      const signed = await signer.signTransaction(tx);
+      // Handle different return types
+      if (signed instanceof Transaction || signed instanceof VersionedTransaction) {
+        return Buffer.from(signed.serialize()).toString('base64');
+      }
+      // If it's already a Uint8Array or similar
+      if (signed instanceof Uint8Array) {
+        return Buffer.from(signed).toString('base64');
+      }
+      throw new Error('Unexpected transaction type from signer');
+    };
+  }, [signer]);
   const queryClient = useQueryClient();
   const [newAddress, setNewAddress] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +154,20 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
 
-      const signature = await sendTransaction(transaction, connection, { skipPreflight: false });
+      // Sign transaction using ConnectorKit
+      if (!signTransaction) {
+        throw new Error('Wallet does not support signing transactions');
+      }
+
+      const signedTransaction = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      // Send the signed transaction
+      const signature = await connection.sendRawTransaction(
+        Buffer.from(signedTransaction, 'base64'),
+        { skipPreflight: false }
+      );
       
       // Wait for confirmation
       await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
@@ -153,7 +175,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       setSuccessTx(signature);
 
       // Invalidate the query to refetch the record
-      queryClient.invalidateQueries({ queryKey: ['useDeserializedRecords', connection.rpcEndpoint, domain, [Record.SOL]] });
+      queryClient.invalidateQueries({ queryKey: ['useDeserializedRecords', endpoint, domain, [Record.SOL]] });
 
       // Wait a bit before closing to show success
       setTimeout(() => {
@@ -168,7 +190,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
     } finally {
       setIsProcessing(false);
     }
-  }, [publicKey, newAddress, domain, connection, sendTransaction, queryClient, onSuccess, onClose]);
+  }, [publicKey, newAddress, domain, currentAddress, connection, endpoint, signTransaction, queryClient, onSuccess, onClose]);
 
   if (!visible) return null;
 
@@ -240,7 +262,12 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
 }
 
 function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
-  const { connection } = useConnection();
+  // Create connection manually
+  const connection = useMemo(() => {
+    const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
+    return new Connection(endpoint, 'confirmed');
+  }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
   
   // Fetch the SOL record (fund receiving address) for this domain
@@ -334,8 +361,16 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
 }
 
 function DomainsView() {
-  const { connection } = useConnection();
-  const { publicKey, connected } = useWallet();
+  // Create connection manually
+  const connection = useMemo(() => {
+    const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
+    return new Connection(endpoint, 'confirmed');
+  }, []);
+
+  const { connected } = useConnector();
+  const { account } = useAccount();
+  const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
   
   // Use the SNS React SDK hook to fetch domains
   // The hook returns { data, isLoading, error } structure
@@ -373,7 +408,7 @@ function DomainsView() {
           <span className="font-semibold text-lg">Lumenless</span>
         </div>
         <div className="flex items-center gap-3">
-          <WalletMultiButton />
+          <WalletButton />
         </div>
       </header>
 

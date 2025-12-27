@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { useConnector } from '@solana/connector';
+import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, Connection, clusterApiUrl } from '@solana/web3.js';
 
 interface WithdrawModalProps {
   visible: boolean;
@@ -14,8 +14,11 @@ interface WithdrawModalProps {
 }
 
 export function WithdrawModal({ visible, onClose, balance, onSuccess }: WithdrawModalProps) {
-  const { publicKey, sendTransaction } = useWallet();
-  const { connection } = useConnection();
+  // Create connection manually
+  const connection = useMemo(() => new Connection(clusterApiUrl('devnet'), 'confirmed'), []);
+
+  const { account, signTransaction } = useConnector();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -101,8 +104,22 @@ export function WithdrawModal({ visible, onClose, balance, onSuccess }: Withdraw
       
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
+
+      // Sign transaction using ConnectorKit
+      if (!signTransaction) {
+        setError('Wallet does not support signing transactions');
+        return;
+      }
+
+      const signedTransaction = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
       
-      const signature = await sendTransaction(transaction, connection, { skipPreflight: false });
+      // Send the signed transaction
+      const signature = await connection.sendRawTransaction(
+        Buffer.from(signedTransaction, 'base64'),
+        { skipPreflight: false }
+      );
       
       await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
       

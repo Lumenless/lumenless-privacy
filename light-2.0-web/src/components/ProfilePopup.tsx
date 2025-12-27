@@ -1,10 +1,10 @@
 'use client';
 
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useConnector, useAccount } from '@solana/connector';
 import { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
 interface ProfilePopupProps {
   balance: number | null; // balance in lamports
@@ -16,7 +16,9 @@ interface ProfilePopupProps {
 }
 
 export function ProfilePopup({ balance, onDeposit, onWithdraw, depositModalVisible, withdrawModalVisible, children }: ProfilePopupProps) {
-  const { publicKey, disconnect } = useWallet();
+  const { account, disconnect } = useConnector();
+  const { formatted } = useAccount();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [isOpen, setIsOpen] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
 

@@ -3,8 +3,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { useConnector } from '@solana/connector';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
 interface DepositModalProps {
   visible: boolean;
@@ -13,7 +13,8 @@ interface DepositModalProps {
 }
 
 export function DepositModal({ visible, onClose, balance }: DepositModalProps) {
-  const { publicKey } = useWallet();
+  const { account } = useConnector();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [amount, setAmount] = useState('');
   const [copied, setCopied] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);

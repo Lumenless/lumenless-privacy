@@ -2,41 +2,35 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
-import { clusterApiUrl, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { clusterApiUrl, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, Connection } from '@solana/web3.js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
-import { ConnectionProvider, WalletProvider, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
-import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack';
-import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
+import { AppProvider } from '@solana/connector/react';
+import { getDefaultConfig } from '@solana/connector/headless';
+import { useConnector } from '@solana/connector';
 import { ProfilePopup } from '@/components/ProfilePopup';
 import { DepositModal } from '@/components/DepositModal';
 import { WithdrawModal } from '@/components/WithdrawModal';
-import '@solana/wallet-adapter-react-ui/styles.css';
+import { WalletButton } from '@/components/WalletButton';
 
 export default function AppPage() {
-  const endpoint = useMemo(() => clusterApiUrl('devnet'), []);
-  const wallets = useMemo(
-    () => [new PhantomWalletAdapter(), new BackpackWalletAdapter(), new SolflareWalletAdapter()],
-    []
-  );
+  // Configure ConnectorKit
+  const config = useMemo(() => getDefaultConfig({ appName: 'Lumenless' }), []);
 
   return (
-    <ConnectionProvider endpoint={endpoint} config={{ commitment: 'confirmed' }}>
-      <WalletProvider wallets={wallets} autoConnect={true}>
-        <WalletModalProvider>
-          <SendSolView />
-        </WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <AppProvider connectorConfig={config}>
+      <SendSolView />
+    </AppProvider>
   );
 }
 
 function SendSolView() {
-  const { connection } = useConnection();
-  const { publicKey, connected, sendTransaction } = useWallet();
+  // Create connection manually
+  const connection = useMemo(() => new Connection(clusterApiUrl('devnet'), 'confirmed'), []);
+
+  const { account, connected, signTransaction } = useConnector();
+  const publicKey = account ? new PublicKey(account.address) : null;
 
   const [balanceLamports, setBalanceLamports] = useState<number | null>(null);
   const [toAddress, setToAddress] = useState<string>('');
@@ -128,7 +122,23 @@ function SendSolView() {
       setStatus('Preparing transaction...');
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
-      const signature = await sendTransaction(transaction, connection, { skipPreflight: false });
+
+      // Sign transaction using ConnectorKit
+      if (!signTransaction) {
+        setStatus('Wallet does not support signing transactions');
+        return;
+      }
+
+      const signedTransaction = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      // Send the signed transaction
+      const signature = await connection.sendRawTransaction(
+        Buffer.from(signedTransaction, 'base64'),
+        { skipPreflight: false }
+      );
+
       // Wait for confirmation
       await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
       setToast({
@@ -149,7 +159,7 @@ function SendSolView() {
     } finally {
       setIsSending(false);
     }
-  }, [connected, publicKey, toAddress, amountSol, connection, sendTransaction, sanitizeAmount]);
+  }, [connected, publicKey, toAddress, amountSol, connection, signTransaction, sanitizeAmount]);
 
   const balanceSol = useMemo(() => {
     return balanceLamports === null ? null : balanceLamports / LAMPORTS_PER_SOL;
@@ -221,7 +231,7 @@ function SendSolView() {
               />
             </ProfilePopup>
           ) : (
-            <WalletMultiButton />
+            <WalletButton />
           )}
         </div>
       </header>

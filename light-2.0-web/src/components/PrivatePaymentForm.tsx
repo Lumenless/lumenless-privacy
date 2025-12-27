@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArciumRealPaymentClient } from "@/lib/arcium-real-payment";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnector } from "@solana/connector";
 import { Wallet } from "@coral-xyz/anchor";
+import { PublicKey } from "@solana/web3.js";
 
 interface PaymentData {
   amount: string;
@@ -15,7 +16,8 @@ interface PaymentData {
 }
 
 export default function PrivatePaymentForm() {
-  const { publicKey, signTransaction, signAllTransactions } = useWallet();
+  const { account, signTransaction, signAllTransactions } = useConnector();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [mounted, setMounted] = useState(false);
   const [paymentData, setPaymentData] = useState<PaymentData>({
     amount: "",
@@ -47,10 +49,38 @@ export default function PrivatePaymentForm() {
 
     try {
       // Create wallet adapter for Arcium client
+      // ConnectorKit's signTransaction returns base64, but Arcium expects Transaction objects
+      // We need to create an adapter
       const wallet: Wallet = {
         publicKey,
-        signTransaction,
-        signAllTransactions,
+        signTransaction: async (tx: any) => {
+          if (!signTransaction) {
+            throw new Error('Wallet does not support signing transactions');
+          }
+          // Serialize transaction and sign
+          const signedBase64 = await signTransaction({
+            transaction: tx.serialize({ requireAllSignatures: false }),
+          });
+          // Deserialize back to Transaction
+          const signedBuffer = Buffer.from(signedBase64, 'base64');
+          return Transaction.from(signedBuffer);
+        },
+        signAllTransactions: async (txs: any[]) => {
+          if (!signAllTransactions) {
+            throw new Error('Wallet does not support signing multiple transactions');
+          }
+          // Serialize all transactions
+          const serialized = txs.map(tx => tx.serialize({ requireAllSignatures: false }));
+          // Sign all
+          const signedBase64Array = await signAllTransactions({
+            transactions: serialized,
+          });
+          // Deserialize back to Transaction array
+          return signedBase64Array.map((signed: string) => {
+            const signedBuffer = Buffer.from(signed, 'base64');
+            return Transaction.from(signedBuffer);
+          });
+        },
       } as Wallet;
 
       // Initialize Arcium private payment client

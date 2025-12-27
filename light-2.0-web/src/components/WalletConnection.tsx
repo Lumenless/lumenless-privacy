@@ -1,8 +1,8 @@
 "use client";
 
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useEffect, useState } from "react";
 import WalletStatus from "./WalletStatus";
+import { WalletButton } from "./WalletButton";
 
 export default function WalletConnection() {
   const [mounted, setMounted] = useState(false);
@@ -21,7 +21,7 @@ export default function WalletConnection() {
 
   return (
     <div className="flex flex-col items-center space-y-4">
-      <WalletMultiButton className="!bg-primary hover:!bg-primary/90 !text-primary-foreground" />
+      <WalletButton />
       <WalletStatus />
     </div>
   );

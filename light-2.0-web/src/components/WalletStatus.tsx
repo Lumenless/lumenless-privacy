@@ -1,10 +1,13 @@
 "use client";
 
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnector, useAccount } from "@solana/connector";
 import { useEffect, useState } from "react";
+import { PublicKey } from "@solana/web3.js";
 
 export default function WalletStatus() {
-  const { connected, publicKey, wallet } = useWallet();
+  const { account, connected } = useConnector();
+  const { formatted } = useAccount();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -35,7 +38,7 @@ export default function WalletStatus() {
         ✅ Wallet Connected
       </p>
       <p className="text-xs text-green-600 mt-1">
-        {wallet?.adapter.name}: {publicKey.toString().slice(0, 8)}...{publicKey.toString().slice(-8)}
+        {account?.wallet.name}: {formatted}
       </p>
     </div>
   );

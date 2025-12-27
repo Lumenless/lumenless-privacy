@@ -1,10 +1,13 @@
 "use client";
 
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnector, useAccount } from "@solana/connector";
 import { useEffect, useState } from "react";
+import { PublicKey } from "@solana/web3.js";
 
 export default function SimpleWalletButton() {
-  const { connected, publicKey, connect, disconnect, wallet } = useWallet();
+  const { account, connected, wallets, select, disconnect } = useConnector();
+  const { formatted } = useAccount();
+  const publicKey = account ? new PublicKey(account.address) : null;
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -19,7 +22,10 @@ export default function SimpleWalletButton() {
 
   const handleConnect = async () => {
     try {
-      await connect();
+      // Select the first available wallet
+      if (wallets.length > 0) {
+        await select(wallets[0].wallet.name);
+      }
     } catch (error) {
       console.error("Failed to connect wallet:", error);
     }
@@ -41,7 +47,7 @@ export default function SimpleWalletButton() {
             ✅ Wallet Connected
           </p>
           <p className="text-xs text-green-600 mt-1">
-            {wallet?.adapter.name}: {publicKey.toString().slice(0, 8)}...{publicKey.toString().slice(-8)}
+            {account?.wallet.name}: {formatted}
           </p>
         </div>
         <button
