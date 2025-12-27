@@ -14,18 +14,30 @@ export function WalletModal({ open, onOpenChange }: WalletModalProps) {
   const [connectingWallet, setConnectingWallet] = useState<string | null>(null);
   const [isOtherWalletsOpen, setIsOtherWalletsOpen] = useState(false);
   const [recentlyConnected, setRecentlyConnected] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const recent = localStorage.getItem('recentlyConnectedWallet');
-    if (recent) setRecentlyConnected(recent);
+    setMounted(true);
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
+
+    const recent = localStorage.getItem('recentlyConnectedWallet');
+    if (recent) setRecentlyConnected(recent);
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted || !open) return;
+
     const handleClickOutside = (event: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-        onOpenChange(false);
+      const target = event.target;
+      if (!target || !(target instanceof Node)) return;
+      if (modalRef.current && modalRef.current.contains(target)) {
+        return;
       }
+      onOpenChange(false);
     };
 
     const handleEscape = (event: KeyboardEvent) => {
@@ -34,18 +46,16 @@ export function WalletModal({ open, onOpenChange }: WalletModalProps) {
       }
     };
 
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    document.body.style.overflow = 'hidden';
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = 'unset';
     };
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, mounted]);
 
   const handleSelectWallet = async (walletName: string) => {
     setConnectingWallet(walletName);
@@ -64,7 +74,7 @@ export function WalletModal({ open, onOpenChange }: WalletModalProps) {
   const primaryWallets = installedWallets.slice(0, 3);
   const otherWallets = installedWallets.slice(3);
 
-  if (!open) return null;
+  if (!mounted || !open) return null;
 
   return (
     <>

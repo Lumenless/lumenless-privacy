@@ -400,7 +400,12 @@ function DomainsView() {
   
   // Use the SNS React SDK hook to fetch domains
   // The hook returns { data, isLoading, error } structure
-  const domains = useDomainsForOwner(connection, publicKey);
+  // Disable the query when publicKey is null to avoid React Query errors
+  const domains = useDomainsForOwner(
+    connection, 
+    publicKey, 
+    publicKey !== null ? undefined : ({ enabled: false } as Parameters<typeof useDomainsForOwner>[2])
+  );
 
   // Debug logging - log domains list to console
   useEffect(() => {
