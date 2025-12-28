@@ -10,9 +10,10 @@ import { AppProvider } from '@solana/connector/react';
 import { getDefaultConfig } from '@solana/connector/headless';
 import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { useDomainsForOwner, useDeserializedRecords } from '@bonfida/sns-react';
+import { useDomainsForOwner } from '@bonfida/sns-react';
 import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content } from '@bonfida/spl-name-service';
 import { WalletButton } from '@/components/WalletButton';
+import { useDomainRecord } from '@/lib/sns-service';
 
 export default function AppPage() {
   // Create a QueryClient instance for React Query
@@ -125,6 +126,8 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
 
       // Determine if record already exists
       const recordExists = currentAddress && currentAddress.trim() !== '';
+      console.log('!!! Record exists:', recordExists);
+      console.log('!!! Current address:', currentAddress);
       
       if (recordExists) {
         // Update existing record
@@ -162,7 +165,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         
         // Validate the new record
         const validateRecordIx = validateRecordV2Content(
-          false, // staleness - false for new records
+          true, // staleness - false for new records
           domain,
           Record.SOL,
           publicKey, // owner
@@ -201,7 +204,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       setSuccessTx(signature);
 
       // Invalidate the query to refetch the record
-      queryClient.invalidateQueries({ queryKey: ['useDeserializedRecords', endpoint, domain, [Record.SOL]] });
+      queryClient.invalidateQueries({ queryKey: ['sns-record', endpoint, domain, Record.SOL] });
 
       // Wait a bit before closing to show success
       setTimeout(() => {
@@ -296,18 +299,37 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
   
-  // Fetch the SOL record (fund receiving address) for this domain
-  const solRecord = useDeserializedRecords(
-    connection,
-    domain,
-    [Record.SOL] // Record.SOL contains the fund receiving address
-  );
-  console.log('!!!', 'domain:', domain, 'SOL record:', solRecord.data);
+  // Use the SNS service to fetch both V1 and V2 records
+  const solRecordQuery = useDomainRecord(connection, domain, Record.SOL);
+  
+  // Extract data from the query result
+  const solAddress = solRecordQuery.data?.address || null;
+  const isVerified = solRecordQuery.data?.isVerified ?? null;
+  const isLoading = solRecordQuery.isLoading;
+  const error = solRecordQuery.error;
+  const source = solRecordQuery.data?.source || null;
+  
+  // Debug logging for lumenless domain
+  useEffect(() => {
+    if (domain === 'lumenless') {
+      console.log('=== LUMENLESS DOMAIN DEBUG ===');
+      console.log('Domain:', domain);
+      console.log('SOL Record Query:', {
+        data: solRecordQuery.data,
+        isLoading: solRecordQuery.isLoading,
+        error: solRecordQuery.error,
+        address: solAddress,
+        isVerified,
+        source,
+      });
+      console.log('=============================');
+    }
+  }, [domain, solRecordQuery, solAddress, isVerified, source]);
 
   const handleEditSuccess = useCallback(() => {
-    // The query will be invalidated by the modal, but we can also refetch here
-    solRecord.refetch();
-  }, [solRecord]);
+    // Invalidate the query to refetch
+    solRecordQuery.refetch();
+  }, [solRecordQuery]);
 
   return (
     <>
@@ -337,19 +359,29 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">Fund Receiving Address (SOL):</span>
               <div className="flex items-center gap-2">
-                {solRecord.isLoading && (
+                {isLoading && (
                   <span className="text-xs text-muted-foreground">Loading...</span>
                 )}
-                {solRecord.error && (
+                {error && (
                   <span className="text-xs text-destructive">Error loading</span>
                 )}
-                {!solRecord.isLoading && !solRecord.error && solRecord.data && solRecord.data[0] && (
+                {!isLoading && !error && solAddress && (
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono text-foreground">
-                      {solRecord.data[0]}
+                      {solAddress}
                     </span>
+                    {source && (
+                      <span className="text-xs text-muted-foreground" title={`Record source: ${source}`}>
+                        ({source})
+                      </span>
+                    )}
+                    {isVerified === true ? (
+                      <span className="text-xs text-green-600 font-medium" title="Verified address">✓ Verified</span>
+                    ) : isVerified === false ? (
+                      <span className="text-xs text-yellow-600 font-medium" title="Unverified address">⚠ Unverified</span>
+                    ) : null}
                     <a
-                      href={`https://solscan.io/account/${solRecord.data[0]}`}
+                      href={`https://solscan.io/account/${solAddress}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs text-primary hover:underline"
@@ -358,7 +390,7 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
                     </a>
                   </div>
                 )}
-                {!solRecord.isLoading && !solRecord.error && (!solRecord.data || !solRecord.data[0]) && (
+                {!isLoading && !error && !solAddress && (
                   <span className="text-xs text-muted-foreground italic">Not set</span>
                 )}
                 <Button
@@ -375,13 +407,13 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
         </div>
       </div>
 
-      <EditSolRecordModal
-        visible={editModalVisible}
-        onClose={() => setEditModalVisible(false)}
-        domain={domain}
-        currentAddress={solRecord.data?.[0] || null}
-        onSuccess={handleEditSuccess}
-      />
+            <EditSolRecordModal
+              visible={editModalVisible}
+              onClose={() => setEditModalVisible(false)}
+              domain={domain}
+              currentAddress={solAddress}
+              onSuccess={handleEditSuccess}
+            />
     </>
   );
 }
