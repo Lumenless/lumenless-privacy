@@ -158,13 +158,17 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         transaction.add(updateRecordIx);
         
         // Validate the updated record (staleness should be true for updates)
+        // The verifier must be the test keypair that will sign the transaction
+        if (!testKeypair) {
+          throw new Error('Test keypair required for validation');
+        }
         const validateRecordIx = validateRecordV2Content(
           true, // staleness - true when updating existing record
           domain,
           Record.SOL,
           publicKey, // owner
           publicKey, // payer
-          recipientPubkey  // verifier (same as owner)
+          testKeypair.publicKey  // verifier - must be the test keypair that signs
         );
         transaction.add(validateRecordIx);
       } else {
@@ -204,35 +208,68 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         throw new Error('Wallet does not support signing transactions');
       }
 
-      if (testKeypair) {
-        transaction.partialSign(testKeypair);
-        console.log('!!! Test keypair signed transaction:', testKeypair.publicKey.toBase58());
-      }
-      else {
+      if (!testKeypair) {
         throw new Error('Test keypair not found, please set NEXT_PUBLIC_TEST_PRIVATE_KEY in .env.local');
       }
 
-      // First, get the user's signature
+      // First, sign with test keypair (this is the verifier for the validation instruction)
+      // This must happen BEFORE the user signs so the transaction knows about all required signers
+      transaction.partialSign(testKeypair);
+      console.log('!!! Test keypair signed transaction:', testKeypair.publicKey.toBase58());
+
+      // Serialize the partially-signed transaction (with test keypair signature)
+      // requireAllSignatures: false allows the user to add their signature
+      const partiallySignedSerialized = transaction.serialize({ requireAllSignatures: false });
+      
+      // Then, get the user's signature (user wallet will add its signature to the already partially-signed transaction)
       const userSignedTx = await signTransaction({
-        transaction: transaction.serialize({ requireAllSignatures: false }),
+        transaction: partiallySignedSerialized,
       });
       console.log('!!! User signed transaction');
       
-      // Deserialize the transaction to add test keypair signature
-    //   const partiallySignedTx = Transaction.from(Buffer.from(userSignedTx, 'base64'));
+      // The transaction should now have both signatures
+      // Deserialize to verify and then serialize for sending
+      const fullySignedTx = Transaction.from(Buffer.from(userSignedTx, 'base64'));
       
-    //   // Also sign with test keypair if available
-    //   if (testKeypair) {
-    //     partiallySignedTx.partialSign(testKeypair);
-    //     console.log('!!! Test keypair also signed transaction:', testKeypair.publicKey.toBase58());
-    //   }
+      // Verify both signatures are present
+      const testKeypairSignature = fullySignedTx.signatures.find(
+        sig => sig.publicKey.equals(testKeypair.publicKey)
+      );
+      const userSignature = fullySignedTx.signatures.find(
+        sig => sig.publicKey.equals(publicKey)
+      );
       
-      // Serialize the fully signed transaction
-      const fullySignedTx = Buffer.from(userSignedTx, 'base64'); //partiallySignedTx.serialize();
+      // If test keypair signature is missing, re-add it
+      // (This can happen if the wallet doesn't preserve existing signatures)
+      if (!testKeypairSignature || testKeypairSignature.signature === null) {
+        console.log('!!! Test keypair signature missing, re-adding...');
+        fullySignedTx.partialSign(testKeypair);
+      }
+      
+      if (!userSignature || userSignature.signature === null) {
+        throw new Error('User signature missing from transaction');
+      }
+      
+      // Verify again after potential re-signing
+      const finalTestKeypairSignature = fullySignedTx.signatures.find(
+        sig => sig.publicKey.equals(testKeypair.publicKey)
+      );
+      
+      if (!finalTestKeypairSignature || finalTestKeypairSignature.signature === null) {
+        throw new Error('Failed to add test keypair signature to transaction');
+      }
+      
+      console.log('!!! Both signatures present:', {
+        testKeypair: testKeypair.publicKey.toBase58(),
+        user: publicKey.toBase58(),
+      });
+        
+      // Serialize the fully signed transaction with both signatures
+      const finalSignedTx = fullySignedTx.serialize();
       
       // Send the signed transaction
       const signature = await connection.sendRawTransaction(
-        fullySignedTx,
+        finalSignedTx,
         { skipPreflight: false }
       );
       

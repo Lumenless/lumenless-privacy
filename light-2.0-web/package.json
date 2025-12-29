@@ -9,8 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@arcium-hq/client": "^0.3.0",
-    "@arcium-hq/reader": "^0.3.0",
+    "@arcium-hq/client": "^0.5.4",
+    "@arcium-hq/reader": "^0.5.4",
     "@bonfida/sns-react": "^3.1.3",
     "@bonfida/spl-name-service": "^3.0.16",
     "@coral-xyz/anchor": "^0.32.1",
