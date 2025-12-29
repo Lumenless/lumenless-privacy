@@ -85,10 +85,7 @@ export class SNSService {
     // Extract address from V2 or V1
     const address = this.extractAddress(v2Data, v1Data);
     
-    // Determine verification status from V2
-    const verificationStatus = this.getVerificationStatus(v2Data);
-
-    // Determine source
+    // Determine source first
     let source: 'v1' | 'v2' | null = null;
     if (address) {
       if (v2Data && this.extractAddressFromV2(v2Data)) {
@@ -97,6 +94,12 @@ export class SNSService {
         source = 'v1';
       }
     }
+    
+    // Determine verification status - only V2 records can be verified
+    // V1 records return null (not applicable)
+    const verificationStatus = source === 'v2' 
+      ? this.getVerificationStatus(v2Data)
+      : { isVerified: null, hasRightOfAssociation: false, hasStalenessValidation: false };
 
     // Combine errors (prefer V2 error if both failed, but V1 might have data)
     const error = v2Error && v1Error ? v2Error : null;
@@ -212,13 +215,13 @@ export class SNSService {
         };
       }
 
+      // Check if validations are set to Validation.Solana (which is 1)
+      // A record is verified only if both validations equal Validation.Solana
       const hasRightOfAssociation = 
-        header.rightOfAssociationValidation !== undefined && 
-        header.rightOfAssociationValidation !== null;
+        header.rightOfAssociationValidation === 1; // Validation.Solana
       
       const hasStalenessValidation = 
-        header.stalenessValidation !== undefined && 
-        header.stalenessValidation !== null;
+        header.stalenessValidation === 1; // Validation.Solana
 
       return {
         isVerified: hasRightOfAssociation && hasStalenessValidation,

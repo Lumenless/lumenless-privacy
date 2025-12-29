@@ -13,6 +13,7 @@
     "@arcium-hq/reader": "^0.3.0",
     "@bonfida/sns-react": "^3.1.3",
     "@bonfida/spl-name-service": "^3.0.16",
+    "@coral-xyz/anchor": "^0.32.1",
     "@radix-ui/react-slot": "^1.2.3",
     "@solana/connector": "^0.1.7",
     "@solana/web3.js": "^1.98.4",

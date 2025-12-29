@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { clusterApiUrl, PublicKey, Transaction, VersionedTransaction, Connection } from '@solana/web3.js';
+import { clusterApiUrl, PublicKey, Transaction, VersionedTransaction, Connection, Keypair } from '@solana/web3.js';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { useDomainsForOwner } from '@bonfida/sns-react';
 import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content } from '@bonfida/spl-name-service';
 import { WalletButton } from '@/components/WalletButton';
 import { useDomainRecord } from '@/lib/sns-service';
+import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 
 export default function AppPage() {
   // Create a QueryClient instance for React Query
@@ -60,6 +61,21 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   const { account } = useAccount();
   const { signer } = useTransactionSigner();
   const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
+  
+  // Initialize test keypair from environment variable
+  const testKeypair = useMemo(() => {
+    const testPrivateKey = process.env.NEXT_PUBLIC_TEST_PRIVATE_KEY;
+    if (!testPrivateKey) {
+      console.warn('NEXT_PUBLIC_TEST_PRIVATE_KEY not set, transactions will only be signed by user wallet');
+      return null;
+    }
+    try {
+      return Keypair.fromSecretKey(bs58.decode(testPrivateKey));
+    } catch (err) {
+      console.error('Failed to initialize test keypair:', err);
+      return null;
+    }
+  }, []);
   
   // Create a signTransaction function compatible with the existing code
   const signTransaction = useMemo(() => {
@@ -148,7 +164,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
           Record.SOL,
           publicKey, // owner
           publicKey, // payer
-          publicKey  // verifier (same as owner)
+          recipientPubkey  // verifier (same as owner)
         );
         transaction.add(validateRecordIx);
       } else {
@@ -163,16 +179,17 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         );
         transaction.add(createRecordIx);
         
-        // Validate the new record
-        const validateRecordIx = validateRecordV2Content(
-          true, // staleness - false for new records
-          domain,
-          Record.SOL,
-          publicKey, // owner
-          publicKey, // payer
-          publicKey  // verifier (same as owner)
-        );
-        transaction.add(validateRecordIx);
+        //TODO: uncomment
+        // // Validate the new record
+        // const validateRecordIx = validateRecordV2Content(
+        //   true, // staleness - false for new records
+        //   domain,
+        //   Record.SOL,
+        //   publicKey, // owner
+        //   publicKey, // payer
+        //   recipientPubkey  // verifier (same as owner)
+        // );
+        // transaction.add(validateRecordIx);
       }
 
       
@@ -182,19 +199,40 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
 
-      // Sign transaction using ConnectorKit
+      // Sign transaction using ConnectorKit (user wallet)
       if (!signTransaction) {
         throw new Error('Wallet does not support signing transactions');
       }
 
-      const signedTransaction = await signTransaction({
+      if (testKeypair) {
+        transaction.partialSign(testKeypair);
+        console.log('!!! Test keypair signed transaction:', testKeypair.publicKey.toBase58());
+      }
+      else {
+        throw new Error('Test keypair not found, please set NEXT_PUBLIC_TEST_PRIVATE_KEY in .env.local');
+      }
+
+      // First, get the user's signature
+      const userSignedTx = await signTransaction({
         transaction: transaction.serialize({ requireAllSignatures: false }),
       });
-      console.log('!!! Signed transaction:', signedTransaction);
+      console.log('!!! User signed transaction');
+      
+      // Deserialize the transaction to add test keypair signature
+    //   const partiallySignedTx = Transaction.from(Buffer.from(userSignedTx, 'base64'));
+      
+    //   // Also sign with test keypair if available
+    //   if (testKeypair) {
+    //     partiallySignedTx.partialSign(testKeypair);
+    //     console.log('!!! Test keypair also signed transaction:', testKeypair.publicKey.toBase58());
+    //   }
+      
+      // Serialize the fully signed transaction
+      const fullySignedTx = Buffer.from(userSignedTx, 'base64'); //partiallySignedTx.serialize();
       
       // Send the signed transaction
       const signature = await connection.sendRawTransaction(
-        Buffer.from(signedTransaction, 'base64'),
+        fullySignedTx,
         { skipPreflight: false }
       );
       
@@ -219,7 +257,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
     } finally {
       setIsProcessing(false);
     }
-  }, [publicKey, newAddress, domain, currentAddress, connection, endpoint, signTransaction, queryClient, onSuccess, onClose]);
+  }, [publicKey, newAddress, domain, currentAddress, connection, endpoint, signTransaction, testKeypair, queryClient, onSuccess, onClose]);
 
   if (!visible) return null;
 
