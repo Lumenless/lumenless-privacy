@@ -148,6 +148,12 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       if (recordExists) {
         // Update existing record
         console.log('!!! Updating existing record');
+        
+        if (!testKeypair) {
+          throw new Error('Test keypair required for validation');
+        }
+        
+        // Instruction 1: Update the record content
         const updateRecordIx = updateRecordV2Instruction(
           domain,
           Record.SOL,
@@ -157,11 +163,10 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         );
         transaction.add(updateRecordIx);
         
-        // Validate the updated record (staleness should be true for updates)
+        // Instruction 2: Validate the updated record (staleness should be true for updates)
         // The verifier must be the test keypair that will sign the transaction
-        if (!testKeypair) {
-          throw new Error('Test keypair required for validation');
-        }
+        // This validates both ROA and staleness - the ROA should be automatically set
+        // when the record content matches what the verifier expects
         const validateRecordIx = validateRecordV2Content(
           true, // staleness - true when updating existing record
           domain,
