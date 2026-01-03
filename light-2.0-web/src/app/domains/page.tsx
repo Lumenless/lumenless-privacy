@@ -11,7 +11,7 @@ import { getDefaultConfig } from '@solana/connector/headless';
 import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useDomainsForOwner } from '@bonfida/sns-react';
-import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content } from '@bonfida/spl-name-service';
+import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content, writRoaRecordV2 } from '@bonfida/spl-name-service';
 import { WalletButton } from '@/components/WalletButton';
 import { useDomainRecord } from '@/lib/sns-service';
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
@@ -62,11 +62,11 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   const { signer } = useTransactionSigner();
   const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
   
-  // Initialize test keypair from environment variable
+  // Initialize test keypair from environment variable (base58)
   const testKeypair = useMemo(() => {
     const testPrivateKey = process.env.NEXT_PUBLIC_TEST_PRIVATE_KEY;
     if (!testPrivateKey) {
-      console.warn('NEXT_PUBLIC_TEST_PRIVATE_KEY not set, transactions will only be signed by user wallet');
+      console.warn('NEXT_PUBLIC_TEST_PRIVATE_KEY not set; validation will fail');
       return null;
     }
     try {
@@ -146,14 +146,10 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       console.log('!!! Current address:', currentAddress);
       
       if (recordExists) {
-        // Update existing record
+        // Update existing record - following SNS dashboard pattern
         console.log('!!! Updating existing record');
         
-        if (!testKeypair) {
-          throw new Error('Test keypair required for validation');
-        }
-        
-        // Instruction 1: Update the record content
+        // Instruction 1: Edit record (updateRecordV2Instruction)
         const updateRecordIx = updateRecordV2Instruction(
           domain,
           Record.SOL,
@@ -163,19 +159,29 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         );
         transaction.add(updateRecordIx);
         
-        // Instruction 2: Validate the updated record (staleness should be true for updates)
-        // The verifier must be the test keypair that will sign the transaction
-        // This validates both ROA and staleness - the ROA should be automatically set
-        // when the record content matches what the verifier expects
+        // Instruction 2: Validate Solana signature (validateRecordV2Content)
+        // This validates staleness - must come before Write RoA
         const validateRecordIx = validateRecordV2Content(
           true, // staleness - true when updating existing record
           domain,
           Record.SOL,
           publicKey, // owner
           publicKey, // payer
-          testKeypair.publicKey  // verifier - must be the test keypair that signs
+          testKeypair ? testKeypair.publicKey : publicKey  // verifier - prefer test keypair
         );
         transaction.add(validateRecordIx);
+        
+        // Instruction 3: Write RoA (writRoaRecordV2)
+        // This must come AFTER validateRecordV2Content, and the roaId should be the content (recipient address)
+        // The ROA links the record content to the verifier for verification
+        const writRoaIx = writRoaRecordV2(
+          domain,
+          Record.SOL,
+          publicKey, // owner
+          publicKey, // payer
+          recipientPubkey  // roaId - must be the recipient address (content of the record)
+        );
+        transaction.add(writRoaIx);
       } else {
         // Create new record
         console.log('!!! Creating new record');
@@ -208,68 +214,35 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
 
-      // Sign transaction using ConnectorKit (user wallet)
+      // Both signatures required: testKeypair (verifier) + user wallet
       if (!signTransaction) {
         throw new Error('Wallet does not support signing transactions');
       }
-
       if (!testKeypair) {
-        throw new Error('Test keypair not found, please set NEXT_PUBLIC_TEST_PRIVATE_KEY in .env.local');
+        throw new Error('Test keypair not found; set NEXT_PUBLIC_TEST_PRIVATE_KEY');
       }
 
-      // First, sign with test keypair (this is the verifier for the validation instruction)
-      // This must happen BEFORE the user signs so the transaction knows about all required signers
+      // First: sign with test keypair
       transaction.partialSign(testKeypair);
-      console.log('!!! Test keypair signed transaction:', testKeypair.publicKey.toBase58());
 
-      // Serialize the partially-signed transaction (with test keypair signature)
-      // requireAllSignatures: false allows the user to add their signature
-      const partiallySignedSerialized = transaction.serialize({ requireAllSignatures: false });
-      
-      // Then, get the user's signature (user wallet will add its signature to the already partially-signed transaction)
+      // Then: have the user wallet sign
       const userSignedTx = await signTransaction({
-        transaction: partiallySignedSerialized,
+        transaction: transaction.serialize({ requireAllSignatures: false }),
       });
       console.log('!!! User signed transaction');
       
-      // The transaction should now have both signatures
-      // Deserialize to verify and then serialize for sending
+      // Deserialize, ensure both signatures present
       const fullySignedTx = Transaction.from(Buffer.from(userSignedTx, 'base64'));
-      
-      // Verify both signatures are present
-      const testKeypairSignature = fullySignedTx.signatures.find(
-        sig => sig.publicKey.equals(testKeypair.publicKey)
-      );
-      const userSignature = fullySignedTx.signatures.find(
-        sig => sig.publicKey.equals(publicKey)
-      );
-      
-      // If test keypair signature is missing, re-add it
-      // (This can happen if the wallet doesn't preserve existing signatures)
-      if (!testKeypairSignature || testKeypairSignature.signature === null) {
-        console.log('!!! Test keypair signature missing, re-adding...');
+      const hasTestSig = fullySignedTx.signatures.some(sig => sig.publicKey.equals(testKeypair.publicKey) && sig.signature);
+      if (!hasTestSig) {
+        console.log('!!! Re-adding test keypair signature');
         fullySignedTx.partialSign(testKeypair);
       }
-      
-      if (!userSignature || userSignature.signature === null) {
+      const hasUserSig = fullySignedTx.signatures.some(sig => sig.publicKey.equals(publicKey) && sig.signature);
+      if (!hasUserSig) {
         throw new Error('User signature missing from transaction');
       }
-      
-      // Verify again after potential re-signing
-      const finalTestKeypairSignature = fullySignedTx.signatures.find(
-        sig => sig.publicKey.equals(testKeypair.publicKey)
-      );
-      
-      if (!finalTestKeypairSignature || finalTestKeypairSignature.signature === null) {
-        throw new Error('Failed to add test keypair signature to transaction');
-      }
-      
-      console.log('!!! Both signatures present:', {
-        testKeypair: testKeypair.publicKey.toBase58(),
-        user: publicKey.toBase58(),
-      });
-        
-      // Serialize the fully signed transaction with both signatures
+
       const finalSignedTx = fullySignedTx.serialize();
       
       // Send the signed transaction
