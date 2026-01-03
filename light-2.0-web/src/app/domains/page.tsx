@@ -15,7 +15,6 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 // Import all SNS functionality from our service (migrated to kit)
 import { 
   useDomainRecord, 
-  useDomainWrappedStatus, 
   useWrappedDomains, 
   useDomainsForOwner,
   Record 
@@ -458,7 +457,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey }: { domain: string; pubkey: string | ReturnType<typeof address> }) {
+function DomainItem({ domain, pubkey, isWrapped }: { domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean }) {
   // Create RPC endpoint
   const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
@@ -478,17 +477,12 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: string | Retur
   // Type assertion needed due to enum type mismatch between packages
   const solRecordQuery = useDomainRecord(endpoint, domain, Record.SOL as unknown as typeof Record);
   
-  // Check if domain is wrapped into NFT
-  const wrappedStatusQuery = useDomainWrappedStatus(endpoint, domainAddress);
-  
   // Extract data from the query result
   const solAddress = solRecordQuery.data?.address || null;
   const isVerified = solRecordQuery.data?.isVerified ?? null;
   const isLoading = solRecordQuery.isLoading;
   const error = solRecordQuery.error;
   const source = solRecordQuery.data?.source || null;
-  const isWrapped = wrappedStatusQuery.data ?? false;
-  const isWrappedLoading = wrappedStatusQuery.isLoading;
   
   // Debug logging for lumenless domain
   useEffect(() => {
@@ -521,9 +515,7 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: string | Retur
               <span className="font-medium text-lg">
                 {domain}.sol
               </span>
-              {isWrappedLoading ? (
-                <span className="text-xs text-muted-foreground">Loading...</span>
-              ) : isWrapped ? (
+               {isWrapped ? (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium" title="This domain is wrapped into an NFT">
                   NFT
                 </span>
@@ -646,18 +638,18 @@ function DomainsView() {
     }
   }, [connected, ownerAddress, wrappedDomains.isLoading, wrappedDomains.error, wrappedDomains.data]);
 
-  // Combine both unwrapped and wrapped domains
+  // Combine both unwrapped and wrapped domains with their wrapped status
   const allDomains = useMemo(() => {
-    const domainsList: Array<{ domain: string; pubkey: string | ReturnType<typeof address> }> = [];
+    const domainsList: Array<{ domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean }> = [];
     
-    // Add unwrapped domains
+    // Add unwrapped domains (isWrapped: false)
     if (unwrappedDomains.data) {
-      domainsList.push(...unwrappedDomains.data);
+      domainsList.push(...unwrappedDomains.data.map(d => ({ ...d, isWrapped: false })));
     }
     
-    // Add wrapped domains
+    // Add wrapped domains (isWrapped: true)
     if (wrappedDomains.data) {
-      domainsList.push(...wrappedDomains.data);
+      domainsList.push(...wrappedDomains.data.map(d => ({ ...d, isWrapped: true })));
     }
     
     return domainsList;
@@ -766,6 +758,7 @@ function DomainsView() {
                     key={pubkeyStr} 
                     domain={domainItem.domain}
                     pubkey={pubkeyStr}
+                    isWrapped={domainItem.isWrapped}
                   />
                 );
               })}

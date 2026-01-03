@@ -375,44 +375,6 @@ export class SNSService {
     return results;
   }
 
-  /**
-   * Checks if a domain is wrapped into an NFT
-   * When a domain is wrapped, it becomes a token mint with associated metadata
-   * @param domainAccountAddress The address of the domain account
-   * @returns Promise<boolean> - true if the domain is wrapped, false otherwise
-   */
-  async isDomainWrapped(domainAccountAddress: string | Address): Promise<boolean> {
-    try {
-      // Convert to address if it's a string
-      const domainAddr = typeof domainAccountAddress === 'string' 
-        ? address(domainAccountAddress) 
-        : domainAccountAddress;
-
-      // Derive the metadata PDA for the domain account
-      // Metadata PDA = ["metadata", TOKEN_METADATA_PROGRAM_ID, mint_address]
-      // Use PublicKey for PDA derivation (kit doesn't have native PDA yet)
-      const domainPubkey = addressToPublicKey(domainAddr);
-      const metadataProgramPubkey = addressToPublicKey(TOKEN_METADATA_PROGRAM_ID);
-      const [metadataPDA] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from('metadata'),
-          metadataProgramPubkey.toBuffer(),
-          domainPubkey.toBuffer(),
-        ],
-        metadataProgramPubkey
-      );
-      const metadataPDAAddr = publicKeyToAddress(metadataPDA);
-
-      // Check if the metadata account exists
-      const metadataAccount = await this.rpc.getAccountInfo(metadataPDAAddr, { commitment: 'confirmed' }).send();
-      
-      // If the account exists and has data, the domain is wrapped
-      return metadataAccount.value !== null && (metadataAccount.value.data?.length ?? 0) > 0;
-    } catch (err) {
-      console.error('Error checking if domain is wrapped:', err);
-      return false;
-    }
-  }
 
   /**
    * Fetches all wrapped SNS domains owned by a wallet using Metaplex metadata
@@ -491,7 +453,7 @@ export class SNSService {
 
         if (decimals !== 0 || amount !== '1') continue;
 
-        if (mintStr != '431YLL6A2uW6W8KZp9CgGHi4EXPskjuXvV65sMsmPoJW') continue; //TODO: Remove this
+        // if (mintStr != '431YLL6A2uW6W8KZp9CgGHi4EXPskjuXvV65sMsmPoJW') continue; //TODO: Remove this
         seen.add(mintStr);
         mints.push(address(mintStr));
       }
@@ -678,34 +640,6 @@ export function useDomainRecord(
   });
 }
 
-/**
- * React hook to check if a domain is wrapped into an NFT
- * @param rpcOrEndpoint The Solana RPC or endpoint string
- * @param domainAccountAddress The address of the domain account
- * @param options Optional query options
- */
-export function useDomainWrappedStatus(
-  rpcOrEndpoint: SolanaRpc | string | null,
-  domainAccountAddress: string | Address | null,
-  options?: { enabled?: boolean }
-) {
-  const enabled = options?.enabled !== false && !!rpcOrEndpoint && !!domainAccountAddress;
-
-  return useQuery({
-    queryKey: ['domain-wrapped', getRpcEndpoint(getRpc(rpcOrEndpoint)), typeof domainAccountAddress === 'string' ? domainAccountAddress : domainAccountAddress],
-    queryFn: async () => {
-      const rpc = getRpc(rpcOrEndpoint);
-      if (!rpc || !domainAccountAddress) {
-        throw new Error('RPC and domain account address are required');
-      }
-      const service = new SNSService(rpc);
-      return service.isDomainWrapped(domainAccountAddress);
-    },
-    enabled,
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
-}
 
 /**
  * React hook to fetch all wrapped SNS domains owned by a wallet
