@@ -2,18 +2,27 @@
 
 import { useConnector, useAccount } from '@solana/connector';
 import { Button } from '@/components/ui/button';
-import { WalletModal } from '@/components/WalletModal';
 import { useEffect, useState } from 'react';
 
 export function WalletButton() {
-  const { disconnect, connected } = useConnector();
+  const { select, disconnect, connected, wallets } = useConnector();
   const { formatted, copy } = useAccount();
   const [mounted, setMounted] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  const handleConnect = async () => {
+    try {
+      // Select the first available wallet
+      if (wallets.length > 0) {
+        await select(wallets[0].wallet.name);
+      }
+    } catch (error) {
+      console.error('Failed to connect wallet:', error);
+    }
+  };
 
   if (!mounted) {
     return (
@@ -23,15 +32,12 @@ export function WalletButton() {
 
   if (!connected) {
     return (
-      <>
-        <Button
-          onClick={() => setModalOpen(true)}
-          className="!bg-primary hover:!bg-primary/90 !text-primary-foreground"
-        >
-          Connect Wallet
-        </Button>
-        <WalletModal open={modalOpen} onOpenChange={setModalOpen} />
-      </>
+      <Button
+        onClick={handleConnect}
+        className="!bg-primary hover:!bg-primary/90 !text-primary-foreground"
+      >
+        Connect Wallet
+      </Button>
     );
   }
 

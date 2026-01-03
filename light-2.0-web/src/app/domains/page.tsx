@@ -2,7 +2,9 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
-import { clusterApiUrl, PublicKey, Transaction, VersionedTransaction, Connection, Keypair } from '@solana/web3.js';
+import { createSolanaRpc, address, type Instruction, type Base64EncodedWireTransaction } from '@solana/kit';
+import { PublicKey, Keypair, Transaction, VersionedTransaction } from '@solana/web3.js'; // Temporary - for Keypair and transaction building until kit has full support
+import type { Record as SnsRecord } from '@solana-name-service/sns-sdk-kit';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,10 +12,114 @@ import { AppProvider } from '@solana/connector/react';
 import { getDefaultConfig } from '@solana/connector/headless';
 import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { useDomainsForOwner } from '@bonfida/sns-react';
-import { Record, updateRecordV2Instruction, createRecordV2Instruction, validateRecordV2Content, writRoaRecordV2 } from '@bonfida/spl-name-service';
+// Import all SNS functionality from our service (migrated to kit)
+import { 
+  useDomainRecord, 
+  useDomainWrappedStatus, 
+  useWrappedDomains, 
+  useDomainsForOwner,
+  Record 
+} from '@/lib/sns-service';
+
+// Import instructions and bindings from @solana-name-service/sns-sdk-kit
+import {
+  updateRecord,
+  createRecord,
+  validateRoa,
+  writeRoa,
+} from '@solana-name-service/sns-sdk-kit';
+import { TransactionInstruction } from '@solana/web3.js';
+
+// Helper to convert PublicKey to Address
+function publicKeyToAddress(pubkey: PublicKey): ReturnType<typeof address> {
+  return address(pubkey.toBase58());
+}
+
+// Helper to convert Instruction to TransactionInstruction
+function iInstructionToTransactionInstruction(iInstruction: Instruction): TransactionInstruction {
+  // Instruction from @solana/kit has programAddress, accounts, and data
+  return new TransactionInstruction({
+    programId: new PublicKey(iInstruction.programAddress),
+    keys: (iInstruction.accounts || []).map((acc: { address: string; isSigner?: boolean; isWritable?: boolean }) => ({
+      pubkey: new PublicKey(acc.address),
+      isSigner: acc.isSigner || false,
+      isWritable: acc.isWritable || false,
+    })),
+    data: Buffer.from(iInstruction.data || []),
+  });
+}
+
+// Create wrapper functions for compatibility with old API
+const updateRecordV2Instruction = async (
+  domain: string,
+  record: SnsRecord,
+  content: string,
+  owner: PublicKey,
+  payer: PublicKey
+): Promise<TransactionInstruction> => {
+  const instruction = await updateRecord({
+    domain,
+    record,
+    content,
+    owner: publicKeyToAddress(owner),
+    payer: publicKeyToAddress(payer),
+  });
+  return iInstructionToTransactionInstruction(instruction);
+};
+
+const createRecordV2Instruction = async (
+  domain: string,
+  record: SnsRecord,
+  content: string,
+  owner: PublicKey,
+  payer: PublicKey
+): Promise<TransactionInstruction> => {
+  const instruction = await createRecord({
+    domain,
+    record,
+    content,
+    owner: publicKeyToAddress(owner),
+    payer: publicKeyToAddress(payer),
+  });
+  return iInstructionToTransactionInstruction(instruction);
+};
+
+const validateRecordV2Content = async (
+  staleness: boolean,
+  domain: string,
+  record: SnsRecord,
+  owner: PublicKey,
+  payer: PublicKey,
+  verifier?: PublicKey
+): Promise<TransactionInstruction> => {
+  const instruction = await validateRoa({
+    staleness,
+    domain,
+    record,
+    owner: publicKeyToAddress(owner),
+    payer: publicKeyToAddress(payer),
+    verifier: verifier ? publicKeyToAddress(verifier) : publicKeyToAddress(owner),
+  });
+  return iInstructionToTransactionInstruction(instruction);
+};
+
+const writRoaRecordV2 = async (
+  domain: string,
+  record: SnsRecord,
+  roaId: PublicKey,
+  owner: PublicKey,
+  payer: PublicKey
+): Promise<TransactionInstruction> => {
+  const instruction = await writeRoa({
+    domain,
+    record,
+    roaId: publicKeyToAddress(roaId),
+    owner: publicKeyToAddress(owner),
+    payer: publicKeyToAddress(payer),
+  });
+  return iInstructionToTransactionInstruction(instruction);
+};
 import { WalletButton } from '@/components/WalletButton';
-import { useDomainRecord } from '@/lib/sns-service';
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 
 export default function AppPage() {
@@ -48,19 +154,17 @@ interface EditSolRecordModalProps {
 }
 
 function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSuccess }: EditSolRecordModalProps) {
-  // Create connection manually
-  const { connection, endpoint } = useMemo(() => {
+  // Create RPC endpoint
+  const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
-    return {
-      connection: new Connection(endpoint, 'confirmed'),
-      endpoint,
-    };
+    return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
 
   const { account } = useAccount();
   const { signer } = useTransactionSigner();
-  const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
+  const ownerAddress = useMemo(() => account ? account.address : null, [account]);
+  // Keep publicKey for transaction building (instructions need PublicKey)
+  const publicKey = useMemo(() => ownerAddress ? new PublicKey(ownerAddress) : null, [ownerAddress]);
   
   // Initialize test keypair from environment variable (base58)
   const testKeypair = useMemo(() => {
@@ -150,7 +254,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         console.log('!!! Updating existing record');
         
         // Instruction 1: Edit record (updateRecordV2Instruction)
-        const updateRecordIx = updateRecordV2Instruction(
+        const updateRecordIx = await updateRecordV2Instruction(
           domain,
           Record.SOL,
           recipientPubkey.toBase58(), // The content is the address as a string
@@ -161,7 +265,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         
         // Instruction 2: Validate Solana signature (validateRecordV2Content)
         // This validates staleness - must come before Write RoA
-        const validateRecordIx = validateRecordV2Content(
+        const validateRecordIx = await validateRecordV2Content(
           true, // staleness - true when updating existing record
           domain,
           Record.SOL,
@@ -174,18 +278,18 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
         // Instruction 3: Write RoA (writRoaRecordV2)
         // This must come AFTER validateRecordV2Content, and the roaId should be the content (recipient address)
         // The ROA links the record content to the verifier for verification
-        const writRoaIx = writRoaRecordV2(
+        const writRoaIx = await writRoaRecordV2(
           domain,
           Record.SOL,
+          recipientPubkey, // roaId - must be the recipient address (content of the record)
           publicKey, // owner
-          publicKey, // payer
-          recipientPubkey  // roaId - must be the recipient address (content of the record)
+          publicKey  // payer
         );
         transaction.add(writRoaIx);
       } else {
         // Create new record
         console.log('!!! Creating new record');
-        const createRecordIx = createRecordV2Instruction(
+        const createRecordIx = await createRecordV2Instruction(
           domain,
           Record.SOL,
           recipientPubkey.toBase58(), // The content is the address as a string
@@ -211,7 +315,9 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
       // Create and send transaction
       transaction.feePayer = publicKey;
 
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      // Create RPC for transaction operations
+      const rpc = createSolanaRpc(endpoint);
+      const { value: { blockhash } } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
       transaction.recentBlockhash = blockhash;
 
       // Both signatures required: testKeypair (verifier) + user wallet
@@ -245,16 +351,25 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
 
       const finalSignedTx = fullySignedTx.serialize();
       
-      // Send the signed transaction
-      const signature = await connection.sendRawTransaction(
-        finalSignedTx,
-        { skipPreflight: false }
-      );
+      // Send the signed transaction (convert Buffer to base64 string for kit)
+      const txBase64 = finalSignedTx.toString('base64');
+      const signatureResponse = await rpc.sendTransaction(txBase64 as Base64EncodedWireTransaction, { skipPreflight: false }).send();
+      const sig = signatureResponse;
       
-      // Wait for confirmation
-      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+      // Wait for confirmation using getSignatureStatuses (kit doesn't have confirmTransaction)
+      let confirmed = false;
+      let attempts = 0;
+      while (!confirmed && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const statusResponse = await rpc.getSignatureStatuses([sig], { searchTransactionHistory: true }).send();
+        const status = statusResponse.value[0];
+        if (status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+          confirmed = true;
+        }
+        attempts++;
+      }
 
-      setSuccessTx(signature);
+      setSuccessTx(sig);
 
       // Invalidate the query to refetch the record
       queryClient.invalidateQueries({ queryKey: ['sns-record', endpoint, domain, Record.SOL] });
@@ -272,7 +387,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
     } finally {
       setIsProcessing(false);
     }
-  }, [publicKey, newAddress, domain, currentAddress, connection, endpoint, signTransaction, testKeypair, queryClient, onSuccess, onClose]);
+  }, [publicKey, newAddress, domain, currentAddress, endpoint, signTransaction, testKeypair, queryClient, onSuccess, onClose]);
 
   if (!visible) return null;
 
@@ -343,17 +458,28 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
-  // Create connection manually
-  const connection = useMemo(() => {
+function DomainItem({ domain, pubkey }: { domain: string; pubkey: string | ReturnType<typeof address> }) {
+  // Create RPC endpoint
+  const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
-    return new Connection(endpoint, 'confirmed');
+    return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
   
+  // Convert pubkey to address if needed
+  const domainAddress = useMemo(() => {
+    if (typeof pubkey === 'string') {
+      return pubkey;
+    }
+    return pubkey;
+  }, [pubkey]);
+  
   // Use the SNS service to fetch both V1 and V2 records
-  const solRecordQuery = useDomainRecord(connection, domain, Record.SOL);
+  // Type assertion needed due to enum type mismatch between packages
+  const solRecordQuery = useDomainRecord(endpoint, domain, Record.SOL as unknown as typeof Record);
+  
+  // Check if domain is wrapped into NFT
+  const wrappedStatusQuery = useDomainWrappedStatus(endpoint, domainAddress);
   
   // Extract data from the query result
   const solAddress = solRecordQuery.data?.address || null;
@@ -361,6 +487,8 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
   const isLoading = solRecordQuery.isLoading;
   const error = solRecordQuery.error;
   const source = solRecordQuery.data?.source || null;
+  const isWrapped = wrappedStatusQuery.data ?? false;
+  const isWrappedLoading = wrappedStatusQuery.isLoading;
   
   // Debug logging for lumenless domain
   useEffect(() => {
@@ -389,15 +517,28 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
       <div className="rounded-lg border border-border bg-card/50 p-4 hover:bg-card/80 transition-colors">
         <div className="flex items-start justify-between mb-3">
           <div className="flex flex-col flex-1">
-            <span className="font-medium text-lg">
-              {domain}.sol
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-lg">
+                {domain}.sol
+              </span>
+              {isWrappedLoading ? (
+                <span className="text-xs text-muted-foreground">Loading...</span>
+              ) : isWrapped ? (
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium" title="This domain is wrapped into an NFT">
+                  NFT
+                </span>
+              ) : (
+                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-medium" title="This domain is not wrapped">
+                  Unwrapped
+                </span>
+              )}
+            </div>
             <span className="text-xs text-muted-foreground font-mono mt-1">
-              Domain: {pubkey.toBase58()}
+              Domain: {typeof pubkey === 'string' ? pubkey : pubkey}
             </span>
           </div>
           <a
-            href={`https://solscan.io/account/${pubkey.toBase58()}`}
+            href={`https://solscan.io/account/${typeof pubkey === 'string' ? pubkey : pubkey}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary hover:underline ml-4"
@@ -472,48 +613,86 @@ function DomainItem({ domain, pubkey }: { domain: string; pubkey: PublicKey }) {
 }
 
 function DomainsView() {
-  // Create connection manually
-  const connection = useMemo(() => {
+  // Create RPC endpoint
+  const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    const endpoint = customRpc || clusterApiUrl('mainnet-beta');
-    return new Connection(endpoint, 'confirmed');
+    return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
 
   const { connected } = useConnector();
   const { account } = useAccount();
-  const publicKey = useMemo(() => account ? new PublicKey(account.address) : null, [account]);
+  const ownerAddress = useMemo(() => account ? account.address : null, [account]);
   
-  // Use the SNS React SDK hook to fetch domains
+  // Use our custom hook to fetch unwrapped domains (replaces @bonfida/sns-react)
   // The hook returns { data, isLoading, error } structure
-  // Disable the query when publicKey is null to avoid React Query errors
-  const domains = useDomainsForOwner(
-    connection, 
-    publicKey, 
-    publicKey !== null ? undefined : ({ enabled: false } as Parameters<typeof useDomainsForOwner>[2])
+  const unwrappedDomains = useDomainsForOwner(
+    endpoint, 
+    ownerAddress, 
+    { enabled: ownerAddress !== null }
   );
+
+  // Fetch wrapped domains (domains that have been wrapped into NFTs)
+  const wrappedDomains = useWrappedDomains(endpoint, ownerAddress);
+
+  // Debug logging for wrapped domains
+  useEffect(() => {
+    if (connected && ownerAddress && wrappedDomains.data !== undefined) {
+      console.log('[DomainsView] Wrapped domains query:', {
+        isLoading: wrappedDomains.isLoading,
+        error: wrappedDomains.error,
+        data: wrappedDomains.data,
+        count: wrappedDomains.data?.length || 0,
+      });
+    }
+  }, [connected, ownerAddress, wrappedDomains.isLoading, wrappedDomains.error, wrappedDomains.data]);
+
+  // Combine both unwrapped and wrapped domains
+  const allDomains = useMemo(() => {
+    const domainsList: Array<{ domain: string; pubkey: string | ReturnType<typeof address> }> = [];
+    
+    // Add unwrapped domains
+    if (unwrappedDomains.data) {
+      domainsList.push(...unwrappedDomains.data);
+    }
+    
+    // Add wrapped domains
+    if (wrappedDomains.data) {
+      domainsList.push(...wrappedDomains.data);
+    }
+    
+    return domainsList;
+  }, [unwrappedDomains.data, wrappedDomains.data]);
+
+  // Combined loading state
+  const isLoading = unwrappedDomains.isLoading || wrappedDomains.isLoading;
+  const error = unwrappedDomains.error || wrappedDomains.error;
 
   // Debug logging - log domains list to console
   useEffect(() => {
-    if (connected && publicKey) {
+    if (connected && ownerAddress) {
       console.log('=== SNS Domains Debug ===');
-      console.log('Wallet Public Key:', publicKey.toBase58());
-      console.log('Loading:', domains.isLoading);
-      console.log('Error:', domains.error);
+      console.log('Wallet Address:', ownerAddress);
+      console.log('Loading:', isLoading);
+      console.log('Error:', error);
       
-      if (domains.data && domains.data.length > 0) {
-        console.log('Domains Found:', domains.data.length);
+      console.log('Unwrapped Domains:', unwrappedDomains.data?.length || 0);
+      console.log('Wrapped Domains:', wrappedDomains.data?.length || 0);
+      
+      if (allDomains.length > 0) {
+        console.log('Total Domains Found:', allDomains.length);
         console.log('Domains List:');
-        domains.data.forEach((domainItem: { domain: string; pubkey: PublicKey }, index: number) => {
+        allDomains.forEach((domainItem: { domain: string; pubkey: string | ReturnType<typeof address> }, index: number) => {
+          const pubkeyStr = typeof domainItem.pubkey === 'string' ? domainItem.pubkey : String(domainItem.pubkey);
           console.log(`  ${index + 1}. ${domainItem.domain}.sol`);
-          console.log(`     Domain Account: ${domainItem.pubkey.toBase58()}`);
+          console.log(`     Domain Account: ${pubkeyStr}`);
         });
         console.log('Note: Fund receiving addresses (SOL records) are loaded per domain below.');
-      } else if (!domains.isLoading && !domains.error) {
+      } else if (!isLoading && !error) {
         console.log('No domains found for this wallet');
       }
       console.log('========================');
     }
-  }, [connected, publicKey, domains.isLoading, domains.error, domains.data]);
+  }, [connected, ownerAddress, isLoading, error, allDomains, unwrappedDomains.data, wrappedDomains.data]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -542,17 +721,17 @@ function DomainsView() {
             </div>
           )}
 
-          {connected && domains.isLoading && (
+          {connected && isLoading && (
             <div className="text-center py-12">
               <p className="text-muted-foreground">Loading domains...</p>
             </div>
           )}
 
-          {connected && domains.error && (
+          {connected && error && (
             <div className="rounded-lg border border-destructive bg-destructive/10 p-4 mb-4">
               <p className="text-sm text-destructive font-semibold">Failed to fetch domains</p>
               <p className="text-xs text-muted-foreground mt-2">
-                {domains.error instanceof Error ? domains.error.message : String(domains.error)}
+                {error instanceof Error ? error.message : String(error)}
               </p>
               <div className="mt-3 p-3 bg-muted rounded-md">
                 <p className="text-xs text-muted-foreground mb-2">
@@ -572,21 +751,24 @@ function DomainsView() {
             </div>
           )}
 
-          {connected && !domains.isLoading && domains.data && domains.data.length === 0 && !domains.error && (
+          {connected && !isLoading && allDomains.length === 0 && !error && (
             <div className="text-center py-12">
               <p className="text-muted-foreground">No domains found</p>
             </div>
           )}
 
-          {connected && !domains.isLoading && domains.data && domains.data.length > 0 && (
+          {connected && !isLoading && allDomains.length > 0 && (
             <div className="space-y-3">
-              {domains.data.map((domainItem: { domain: string; pubkey: PublicKey }) => (
-                <DomainItem 
-                  key={domainItem.pubkey.toBase58()} 
-                  domain={domainItem.domain}
-                  pubkey={domainItem.pubkey}
-                />
-              ))}
+              {allDomains.map((domainItem) => {
+                const pubkeyStr = typeof domainItem.pubkey === 'string' ? domainItem.pubkey : String(domainItem.pubkey);
+                return (
+                  <DomainItem 
+                    key={pubkeyStr} 
+                    domain={domainItem.domain}
+                    pubkey={pubkeyStr}
+                  />
+                );
+              })}
             </div>
           )}
         </Card>

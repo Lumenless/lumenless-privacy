@@ -1,17 +1,22 @@
-import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { createSolanaRpc, type Base64EncodedWireTransaction, type Signature } from "@solana/kit";
+import { PublicKey, Transaction, SystemProgram, Connection } from "@solana/web3.js"; // Temporary - for Transaction building until kit has full transaction support
+import { LAMPORTS_PER_SOL } from "@solana/web3.js"; // Constant
 import { AnchorProvider, Wallet } from "@coral-xyz/anchor";
 
-// Solana devnet connection
+// Solana devnet RPC endpoint
 export const DEVNET_RPC = "https://api.devnet.solana.com";
-export const connection = new Connection(DEVNET_RPC, "confirmed");
+export const rpc = createSolanaRpc(DEVNET_RPC);
 
 // Real Solana payment implementation
 export class RealSolanaPaymentClient {
   private provider: AnchorProvider;
-  private connection: Connection;
+  private rpc: ReturnType<typeof createSolanaRpc>;
 
   constructor(wallet: Wallet) {
-    this.connection = connection;
+    this.rpc = rpc;
+    // AnchorProvider still needs Connection for now - keep using it temporarily
+    // TODO: Migrate to kit-native provider when available
+    const connection = new Connection(DEVNET_RPC, "confirmed");
     this.provider = new AnchorProvider(connection, wallet, {
       commitment: "confirmed",
     });
@@ -36,26 +41,24 @@ export class RealSolanaPaymentClient {
       // Create recipient public key
       const recipientPubkey = new PublicKey(recipient);
       
-      // Create transaction
+      // Create transaction using SystemProgram (this file still uses web3.js for AnchorProvider)
       const transaction = new Transaction();
-      
-      // Add transfer instruction
-      const transferInstruction = SystemProgram.transfer({
-        fromPubkey: sender,
-        toPubkey: recipientPubkey,
-        lamports: lamports,
-      });
-      
-      transaction.add(transferInstruction);
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: sender,
+          toPubkey: recipientPubkey,
+          lamports: lamports,
+        })
+      );
       
       // Get recent blockhash
-      const { blockhash } = await this.connection.getLatestBlockhash();
+      const { value: { blockhash } } = await this.rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = sender;
       
       console.log("Transaction created:", {
         amount: amount,
-        lamports: lamports,
+        lamports: lamports.toString(),
         recipient: recipient,
         sender: sender.toString(),
         blockhash: blockhash
@@ -75,23 +78,33 @@ export class RealSolanaPaymentClient {
       // Sign the transaction
       const signedTransaction = await this.provider.wallet.signTransaction(transaction);
       
-      // Send the transaction
-      const signature = await this.connection.sendRawTransaction(signedTransaction.serialize());
+      // Send the transaction using RPC
+      const txBase64 = signedTransaction.serialize().toString('base64');
+      const signatureResponse = await this.rpc.sendTransaction(txBase64 as Base64EncodedWireTransaction, { skipPreflight: false }).send();
+      const signature = signatureResponse;
       
       console.log("Transaction sent with signature:", signature);
       
-      // Wait for confirmation
-      const confirmation = await this.connection.confirmTransaction(signature, "confirmed");
-      
-      if (confirmation.value.err) {
-        throw new Error(`Transaction failed: ${confirmation.value.err}`);
+      // Wait for confirmation using getSignatureStatuses
+      let confirmed = false;
+      let attempts = 0;
+      while (!confirmed && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const statusResponse = await this.rpc.getSignatureStatuses([signature], { searchTransactionHistory: true }).send();
+        const status = statusResponse.value[0];
+        if (status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+          confirmed = true;
+        }
+        if (status?.err) {
+          throw new Error(`Transaction failed: ${status.err}`);
+        }
+        attempts++;
       }
       
-      console.log("Transaction confirmed:", confirmation);
+      console.log("Transaction confirmed");
       
       return {
         signature,
-        confirmation,
         transaction: signedTransaction
       };
     } catch (error) {
@@ -102,9 +115,11 @@ export class RealSolanaPaymentClient {
 
   async getTransactionDetails(signature: string) {
     try {
-      const transaction = await this.connection.getTransaction(signature, {
-        commitment: "confirmed"
-      });
+      const transaction = await this.rpc.getTransaction(signature as Signature, {
+        commitment: "confirmed",
+        encoding: "jsonParsed",
+        maxSupportedTransactionVersion: 0,
+      }).send();
       
       if (!transaction) {
         throw new Error("Transaction not found");
@@ -131,18 +146,23 @@ export class RealSolanaPaymentClient {
       // Create transaction
       const transaction = await this.createPaymentTransaction(amount, recipient, sender);
       
-      // Simulate the transaction (don't actually send it)
-      const simulation = await this.connection.simulateTransaction(transaction);
+      // Simulate the transaction using RPC
+      const txBase64 = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+      const simulationResponse = await this.rpc.simulateTransaction(txBase64 as Base64EncodedWireTransaction, {
+        commitment: 'confirmed',
+        sigVerify: false,
+        encoding: 'base64',
+      }).send();
       
-      if (simulation.value.err) {
-        throw new Error(`Transaction simulation failed: ${simulation.value.err}`);
+      if (simulationResponse.value.err) {
+        throw new Error(`Transaction simulation failed: ${simulationResponse.value.err}`);
       }
       
-      console.log("Transaction simulation successful:", simulation);
+      console.log("Transaction simulation successful:", simulationResponse.value);
       
       return {
         success: true,
-        simulation,
+        simulation: simulationResponse.value,
         transaction
       };
     } catch (error) {

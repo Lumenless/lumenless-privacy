@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 
 export default function WalletStatus() {
-  const { account, connected } = useConnector();
-  const { formatted } = useAccount();
+  const { connected } = useConnector();
+  const { account, formatted } = useAccount();
   const publicKey = account ? new PublicKey(account.address) : null;
   const [mounted, setMounted] = useState(false);
 
@@ -38,7 +38,7 @@ export default function WalletStatus() {
         ✅ Wallet Connected
       </p>
       <p className="text-xs text-green-600 mt-1">
-        {account?.wallet.name}: {formatted}
+        {formatted}
       </p>
     </div>
   );

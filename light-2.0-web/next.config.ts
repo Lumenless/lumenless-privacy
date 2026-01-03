@@ -2,14 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  webpack: (config, { isServer }) => {
-    // Exclude supabase functions from webpack compilation
-    config.watchOptions = {
-      ...config.watchOptions,
-      ignored: ['**/supabase/**'],
-    };
-    return config;
-  },
+  // Note: When using Turbopack (--turbopack flag), webpack config is ignored
+  // Turbopack has built-in file watching and doesn't need webpack watchOptions
 };
 
 export default nextConfig;

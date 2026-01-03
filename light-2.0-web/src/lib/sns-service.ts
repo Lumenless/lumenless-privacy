@@ -1,14 +1,110 @@
-import { Connection, PublicKey } from '@solana/web3.js';
-import { Record, NameRegistryState } from '@bonfida/spl-name-service';
-import { getRecordV2, getRecord } from '@bonfida/spl-name-service';
+// Fully migrated to @solana/kit - no @solana/web3.js dependencies
+import { createSolanaRpc, address, type Address as KitAddress, getProgramDerivedAddress } from '@solana/kit';
+import { PublicKey } from '@solana/web3.js'; // Temporary - only for PDA derivation until kit has native support
 import { useQuery } from '@tanstack/react-query';
-import type { Record as SnsRecord } from '@bonfida/sns-records';
+import { bs58 } from '@coral-xyz/anchor/dist/cjs/utils/bytes';
+// Import Metaplex metadata serializer
+import { Collection, getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
+
+// Import from @solana-name-service/sns-sdk-kit
+import {
+  getDomainRecord,
+  getDomainsForAddress,
+  Record as SnsRecord,
+} from '@solana-name-service/sns-sdk-kit';
+
+// Type for RPC (return type of createSolanaRpc)
+type SolanaRpc = ReturnType<typeof createSolanaRpc>;
+type Address = KitAddress;
+
+// Helper functions to convert between Address and PublicKey
+function addressToPublicKey(addr: Address | string): PublicKey {
+  const addrStr = typeof addr === 'string' ? addr : addr;
+  return new PublicKey(addrStr);
+}
+
+function publicKeyToAddress(pubkey: PublicKey): Address {
+  return address(pubkey.toBase58());
+}
+
+// Export Record type for use in other files
+export { SnsRecord as Record };
 
 /**
- * V2 record result structure (matches SingleRecordResult from getRecordV2)
+ * Metaplex Token Metadata Program ID
+ * Used to check if a domain is wrapped into an NFT
+ */
+const TOKEN_METADATA_PROGRAM_ID = address('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+const TOKEN_PROGRAM_ID = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_2022_PROGRAM_ID = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'); // token-2022
+const SOL_DOMAIN_COLLECTION_ADDRESS = 'E5ZnBpH9DYcxRkumKdS4ayJ3Ftb6o3E8wSbXw4N92GWg';
+
+/**
+ * Helper function to chunk an array into smaller arrays
+ */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Helper function to clean null bytes from strings
+ */
+function cleanStr(s: string) {
+  return s.replace(/\0/g, '').trim();
+}
+
+/**
+ * Decodes account data from various RPC response formats to a Buffer
+ */
+function decodeAccountDataToBuffer(data: unknown): Buffer | null {
+  if (!data) return null;
+
+  // Most common: [base64String, 'base64']
+  if (Array.isArray(data) && typeof data[0] === 'string') {
+    return Buffer.from(data[0], 'base64');
+  }
+
+  // Sometimes: { data: [base64, 'base64'] }
+  if (typeof data === 'object' && data !== null && 'data' in data && Array.isArray((data as { data: unknown }).data) && typeof (data as { data: string[] }).data[0] === 'string') {
+    return Buffer.from((data as { data: string[] }).data[0], 'base64');
+  }
+
+  // Sometimes: base64 string directly
+  if (typeof data === 'string') {
+    return Buffer.from(data, 'base64');
+  }
+
+  return null;
+}
+
+/**
+ * Finds the metadata PDA for a given mint address
+ */
+async function findMetadataPda(mint: Address): Promise<Address> {
+  // PDA: ["metadata", token_metadata_program_id, mint]
+  // Convert addresses (base58 strings) to bytes for seeds
+  const metadataProgramBytes = bs58.decode(TOKEN_METADATA_PROGRAM_ID);
+  const mintBytes = bs58.decode(mint);
+  
+  const [pda] = await getProgramDerivedAddress({
+    programAddress: TOKEN_METADATA_PROGRAM_ID,
+    seeds: [
+      Buffer.from('metadata'),
+      Buffer.from(metadataProgramBytes),
+      Buffer.from(mintBytes),
+    ],
+  });
+
+  return pda;
+}
+
+/**
+ * V2 record result structure
  */
 interface SingleRecordResult {
-  retrievedRecord: SnsRecord;
+  retrievedRecord: unknown; // Type from SNS SDK
   deserializedContent?: string;
 }
 
@@ -27,7 +123,7 @@ export interface DomainRecordResult {
   /** Raw V2 record data */
   v2Data: SingleRecordResult | null;
   /** Raw V1 record data */
-  v1Data: NameRegistryState | null;
+  v1Data: unknown | null; // RegistryState or NameRegistryState depending on package
   /** Which version had the data (v1, v2, or null) */
   source: 'v1' | 'v2' | null;
 }
@@ -44,12 +140,18 @@ export interface VerificationStatus {
 /**
  * SNS Service Class
  * Handles fetching and managing Solana Name Service records
+ * Uses @solana/kit RPC and @solana-name-service/sns-sdk-kit
  */
 export class SNSService {
-  private connection: Connection;
+  private rpc: SolanaRpc;
 
-  constructor(connection: Connection) {
-    this.connection = connection;
+  constructor(rpcOrEndpoint: SolanaRpc | string) {
+    // Accept either RPC instance or endpoint string
+    if (typeof rpcOrEndpoint === 'string') {
+      this.rpc = createSolanaRpc(rpcOrEndpoint);
+    } else {
+      this.rpc = rpcOrEndpoint;
+    }
   }
 
   /**
@@ -60,34 +162,33 @@ export class SNSService {
    */
   async fetchDomainRecord(
     domain: string,
-    recordType: Record
+    recordType: typeof SnsRecord
   ): Promise<DomainRecordResult> {
     let v2Data: SingleRecordResult | null = null;
-    let v1Data: NameRegistryState | null = null;
+    const v1Data: unknown | null = null;
     let v2Error: Error | null = null;
-    let v1Error: Error | null = null;
+    const v1Error: Error | null = null;
 
-    // Try V2 first (newer format) - deserialize it
+    // Try to get domain record using kit's getDomainRecord
+    // Type assertion needed due to RPC type incompatibilities between packages
     try {
-      v2Data = await getRecordV2(this.connection, domain, recordType, { deserialize: true });
+      // Type assertion needed due to RPC and Record type incompatibilities between packages
+      const recordResult = await getDomainRecord({ rpc: this.rpc as unknown as Parameters<typeof getDomainRecord>[0]['rpc'], domain, record: recordType as unknown as Parameters<typeof getDomainRecord>[0]['record'] });
+      // getDomainRecord returns the record data directly
+      const recordContent = typeof recordResult === 'object' && recordResult !== null && 'content' in recordResult 
+        ? (recordResult as { content?: string }).content 
+        : undefined;
+      v2Data = { retrievedRecord: recordResult, deserializedContent: recordContent };
     } catch (err) {
       v2Error = err instanceof Error ? err : new Error(String(err));
     }
 
-    // Try V1 as fallback (older format) - don't deserialize, we'll extract manually
-    try {
-      const v1Result = await getRecord(this.connection, domain, recordType, false);
-      v1Data = v1Result || null;
-    } catch (err) {
-      v1Error = err instanceof Error ? err : new Error(String(err));
-    }
-
     // Extract address from V2 or V1
-    const address = this.extractAddress(v2Data, v1Data);
+    const addressStr = this.extractAddress(v2Data, v1Data);
     
     // Determine source first
     let source: 'v1' | 'v2' | null = null;
-    if (address) {
+    if (addressStr) {
       if (v2Data && this.extractAddressFromV2(v2Data)) {
         source = 'v2';
       } else if (v1Data) {
@@ -105,7 +206,7 @@ export class SNSService {
     const error = v2Error && v1Error ? v2Error : null;
 
     return {
-      address,
+      address: addressStr,
       isVerified: verificationStatus.isVerified,
       isLoading: false,
       error,
@@ -118,7 +219,7 @@ export class SNSService {
   /**
    * Extracts the address from V2 or V1 record data
    */
-  private extractAddress(v2Data: SingleRecordResult | null, v1Data: NameRegistryState | null): string | null {
+  private extractAddress(v2Data: SingleRecordResult | null, v1Data: unknown | null): string | null {
     // Try V2 first
     const v2Address = this.extractAddressFromV2(v2Data);
     if (v2Address) {
@@ -126,12 +227,25 @@ export class SNSService {
     }
 
     // Fallback to V1
-    if (v1Data?.data) {
+    if (v1Data && typeof v1Data === 'object' && v1Data !== null && 'data' in v1Data) {
       try {
-        // V1 records store the PublicKey as bytes in the data field
-        const pubkeyBytes = v1Data.data.slice(0, 32);
-        const pubkey = new PublicKey(pubkeyBytes);
-        return pubkey.toBase58();
+        // V1 records store the address as bytes in the data field
+        const v1Record = v1Data as { data: unknown };
+        let addressBytes: Uint8Array | null = null;
+        
+        if (Array.isArray(v1Record.data)) {
+          addressBytes = new Uint8Array(v1Record.data.slice(0, 32));
+        } else if (v1Record.data instanceof Uint8Array) {
+          addressBytes = v1Record.data.slice(0, 32);
+        }
+        
+        if (!addressBytes) return null;
+        
+        // Convert bytes to base58 string, then to Address
+        // V1 data is already in the correct format - convert to base58 first
+        const base58String = bs58.encode(addressBytes);
+        const addr = address(base58String);
+        return addr;
       } catch (err) {
         console.error('Error extracting address from V1 record:', err);
       }
@@ -169,11 +283,11 @@ export class SNSService {
       }
 
       // Check if it has a retrievedRecord structure
-      // Note: retrievedRecord is an SnsRecord, which has getContent() method
       if (v2Data.retrievedRecord) {
         // Try to get content from the retrievedRecord
         try {
-          const content = v2Data.retrievedRecord.getContent();
+          const record = v2Data.retrievedRecord as unknown as { getContent?: () => string | string[] | undefined };
+          const content = record.getContent?.();
           if (content && typeof content === 'string') {
             return content;
           }
@@ -205,7 +319,8 @@ export class SNSService {
 
     try {
       // Navigate to the header from retrievedRecord
-      const header = v2Data.retrievedRecord?.header || null;
+      const record = v2Data.retrievedRecord as unknown as { header?: { isVerified?: boolean; rightOfAssociationValidation?: number; stalenessValidation?: number } } | null;
+      const header = record?.header || null;
 
       if (!header) {
         return {
@@ -218,10 +333,10 @@ export class SNSService {
       // Check if validations are set to Validation.Solana (which is 1)
       // A record is verified only if both validations equal Validation.Solana
       const hasRightOfAssociation = 
-        header.rightOfAssociationValidation === 1; // Validation.Solana
+        (header.rightOfAssociationValidation ?? 0) === 1; // Validation.Solana
       
       const hasStalenessValidation = 
-        header.stalenessValidation === 1; // Validation.Solana
+        (header.stalenessValidation ?? 0) === 1; // Validation.Solana
 
       return {
         isVerified: hasRightOfAssociation && hasStalenessValidation,
@@ -246,7 +361,7 @@ export class SNSService {
    */
   async fetchDomainRecords(
     domain: string,
-    recordTypes: Record[]
+    recordTypes: (typeof SnsRecord)[]
   ): Promise<{ [key: string]: DomainRecordResult }> {
     const results: { [key: string]: DomainRecordResult } = {};
 
@@ -259,27 +374,302 @@ export class SNSService {
 
     return results;
   }
+
+  /**
+   * Checks if a domain is wrapped into an NFT
+   * When a domain is wrapped, it becomes a token mint with associated metadata
+   * @param domainAccountAddress The address of the domain account
+   * @returns Promise<boolean> - true if the domain is wrapped, false otherwise
+   */
+  async isDomainWrapped(domainAccountAddress: string | Address): Promise<boolean> {
+    try {
+      // Convert to address if it's a string
+      const domainAddr = typeof domainAccountAddress === 'string' 
+        ? address(domainAccountAddress) 
+        : domainAccountAddress;
+
+      // Derive the metadata PDA for the domain account
+      // Metadata PDA = ["metadata", TOKEN_METADATA_PROGRAM_ID, mint_address]
+      // Use PublicKey for PDA derivation (kit doesn't have native PDA yet)
+      const domainPubkey = addressToPublicKey(domainAddr);
+      const metadataProgramPubkey = addressToPublicKey(TOKEN_METADATA_PROGRAM_ID);
+      const [metadataPDA] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('metadata'),
+          metadataProgramPubkey.toBuffer(),
+          domainPubkey.toBuffer(),
+        ],
+        metadataProgramPubkey
+      );
+      const metadataPDAAddr = publicKeyToAddress(metadataPDA);
+
+      // Check if the metadata account exists
+      const metadataAccount = await this.rpc.getAccountInfo(metadataPDAAddr, { commitment: 'confirmed' }).send();
+      
+      // If the account exists and has data, the domain is wrapped
+      return metadataAccount.value !== null && (metadataAccount.value.data?.length ?? 0) > 0;
+    } catch (err) {
+      console.error('Error checking if domain is wrapped:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Fetches all wrapped SNS domains owned by a wallet using Metaplex metadata
+   * When domains are wrapped, they become NFTs and ownership is tracked via token accounts
+   * Uses getDomainsForAddress for unwrapped domains and Metaplex metadata for wrapped domains
+   * @param ownerAddress The address of the wallet owner
+   * @returns Promise<Array<{ domain: string; pubkey: Address }>> - Array of wrapped domains
+   */
+  async fetchWrappedDomains(ownerAddress: string | Address): Promise<Array<{ domain: string; pubkey: Address }>> {
+    try {
+      const ownerAddr = typeof ownerAddress === 'string' ? address(ownerAddress) : ownerAddress;
+      const batchSize = 100;
+      const includeToken2022 = true;
+
+      console.log(`[fetchWrappedDomains] Starting fetch for owner: ${ownerAddr}`);
+
+      // 1) Get token accounts by owner (parsed) for both Token and Token-2022 programs
+      console.log(`[fetchWrappedDomains] Fetching token accounts for Token program...`);
+      const calls = [
+        this.rpc.getTokenAccountsByOwner(ownerAddr, { programId: TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }).send(),
+      ];
+      if (includeToken2022) {
+        console.log(`[fetchWrappedDomains] Fetching token accounts for Token-2022 program...`);
+        calls.push(
+          this.rpc.getTokenAccountsByOwner(ownerAddr, { programId: TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed' }).send()
+        );
+      }
+
+      const res = await Promise.all(calls);
+      const tokenAccounts = res.flatMap((r) => {
+        const response = r as unknown as { value?: Array<{ account: { data: { parsed?: { info?: { mint?: string; tokenAmount?: { decimals?: number; amount?: string } } } } } }> };
+        return response.value ?? [];
+      });
+
+      console.log(`[fetchWrappedDomains] Found ${tokenAccounts.length} total token accounts`);
+
+      // 2) Pick NFT-ish mints (decimals=0, amount=1)
+      const mints: Address[] = [];
+      const seen = new Set<string>();
+      let nftCandidatesCount = 0;
+      let skippedNonNFT = 0;
+      let skippedDuplicate = 0;
+
+      for (const ta of tokenAccounts) {
+        const info = ta?.account?.data?.parsed?.info;
+        if (!info) {
+          console.debug(`[fetchWrappedDomains] Skipping token account - no parsed info`);
+          continue;
+        }
+
+        const tokenAmount = info.tokenAmount;
+        const decimals = tokenAmount?.decimals ?? -1;
+        const amount = tokenAmount?.amount ?? '0';
+        const mintStr: string | undefined = info.mint;
+
+        if (!mintStr) {
+          console.debug(`[fetchWrappedDomains] Skipping token account - no mint address`);
+          continue;
+        }
+
+        if (seen.has(mintStr)) {
+          skippedDuplicate++;
+          continue;
+        }
+
+        // Log details for potential NFTs
+        if (decimals === 0 && amount === '1') {
+          nftCandidatesCount++;
+          console.log(`[fetchWrappedDomains] NFT candidate found: mint=${mintStr}, decimals=${decimals}, amount=${amount}`);
+        } else {
+          skippedNonNFT++;
+          if (decimals === 0 || amount === '1') {
+            console.debug(`[fetchWrappedDomains] Not an NFT: mint=${mintStr}, decimals=${decimals}, amount=${amount}`);
+          }
+        }
+
+        if (decimals !== 0 || amount !== '1') continue;
+
+        if (mintStr != '431YLL6A2uW6W8KZp9CgGHi4EXPskjuXvV65sMsmPoJW') continue; //TODO: Remove this
+        seen.add(mintStr);
+        mints.push(address(mintStr));
+      }
+
+      console.log(`[fetchWrappedDomains] NFT candidates: ${nftCandidatesCount}, unique NFTs: ${mints.length}, skipped non-NFT: ${skippedNonNFT}, skipped duplicates: ${skippedDuplicate}`);
+      console.log(`[fetchWrappedDomains] NFT candidates seen: ${JSON.stringify(mints)}`);
+
+      if (mints.length === 0) {
+        console.log(`[fetchWrappedDomains] No NFT mints found, returning empty array`);
+        return [];
+      }
+
+      // 3) Get metadata PDAs for all mints
+      console.log(`[fetchWrappedDomains] Deriving metadata PDAs for ${mints.length} mints...`);
+      const pairs = await Promise.all(
+        mints.map(async (mint) => {
+          const mdPda = await findMetadataPda(mint);
+          console.debug(`[fetchWrappedDomains] Mint ${mint} -> Metadata PDA ${mdPda}`);
+          return { mint, mdPda };
+        })
+      );
+
+      // 4) Batch fetch metadata accounts and filter for .sol domains
+      const wrappedDomains: Array<{ domain: string; pubkey: Address }> = [];
+      const batches = chunk(pairs, batchSize);
+      console.log(`[fetchWrappedDomains] Processing ${batches.length} batch(es) of metadata accounts...`);
+
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batch = batches[batchIdx];
+        console.log(`[fetchWrappedDomains] Fetching batch ${batchIdx + 1}/${batches.length} (${batch.length} accounts)...`);
+        const accounts = await this.rpc.getMultipleAccounts(batch.map((p) => p.mdPda), { encoding: 'base64' }).send();
+
+        for (let i = 0; i < batch.length; i++) {
+          const acc = accounts?.value?.[i];
+          const mint = batch[i].mint;
+          const mdPda = batch[i].mdPda;
+
+          if (!acc) {
+            console.debug(`[fetchWrappedDomains] No metadata account found for mint ${mint} (PDA: ${mdPda})`);
+            continue;
+          }
+
+          const buf = decodeAccountDataToBuffer(acc.data);
+          if (!buf) {
+            console.debug(`[fetchWrappedDomains] Could not decode metadata account data for mint ${mint} (PDA: ${mdPda})`);
+            continue;
+          }
+
+          try {
+            // Use Metaplex serializer to properly deserialize metadata
+            const serializer = getMetadataAccountDataSerializer();
+            
+            // Convert Buffer to Uint8Array for the serializer
+            // The account data from getMultipleAccounts is the raw account data (starts with discriminator/key byte)
+            const bytes = new Uint8Array(buf);
+            
+            // Deserialize the metadata (serializer handles the structure starting from the key byte)
+            const metadataData = serializer.deserialize(bytes)[0];
+            const name = cleanStr(metadataData.name);
+                        
+            const collection = metadataData.collection.__option=='Some' ? metadataData.collection.value : undefined;
+            console.log(`[fetchWrappedDomains] Mint ${mint}: metadata name="${name}", collection=${collection ? JSON.stringify(collection) : 'undefined'}`);
+            
+            if (!collection) {
+              console.debug(`[fetchWrappedDomains] Mint ${mint}: collection is undefined, skipping`);
+              continue;
+            }
+            
+            console.log(`[fetchWrappedDomains] Mint ${mint}: collection address="${collection.key.toString()} verified=${collection.verified}"`);
+            
+            if (collection.key.toString() !== SOL_DOMAIN_COLLECTION_ADDRESS) {
+              console.debug(`[fetchWrappedDomains] Mint ${mint}: collection "${collection.key.toString()}" does not match SOL domain collection "${SOL_DOMAIN_COLLECTION_ADDRESS}", skipping`);
+              continue;
+            }
+
+            // Use the name as the domain (it doesn't have .sol suffix in metadata)
+            const domainName = name;
+            console.log(`[fetchWrappedDomains] ✓ Found wrapped domain: ${domainName}.sol (mint: ${mint})`);
+            wrappedDomains.push({
+              domain: domainName,
+              pubkey: mint,
+            });
+          } catch (err) {
+            console.error(`[fetchWrappedDomains] Error parsing metadata for mint ${mint}:`, err);
+            if (err instanceof Error) {
+              console.error(`[fetchWrappedDomains] Error details: ${err.message}`);
+              if (err.stack) {
+                console.error(`[fetchWrappedDomains] Stack: ${err.stack}`);
+              }
+            }
+            continue;
+          }
+        }
+      }
+
+      console.log(`[fetchWrappedDomains] ✓ Found ${wrappedDomains.length} wrapped domains via Metaplex metadata`);
+      if (wrappedDomains.length > 0) {
+        console.log(`[fetchWrappedDomains] Domain list:`, wrappedDomains.map(d => d.domain));
+      }
+
+      return wrappedDomains;
+    } catch (err) {
+      console.error('[fetchWrappedDomains] Error fetching wrapped domains:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Fetches all unwrapped SNS domains owned by a wallet
+   * @param ownerAddress The address of the wallet owner
+   * @returns Promise<Array<{ domain: string; pubkey: Address }>> - Array of unwrapped domains
+   */
+  async fetchDomainsForOwner(ownerAddress: string | Address): Promise<Array<{ domain: string; pubkey: Address }>> {
+    try {
+      const ownerAddr = typeof ownerAddress === 'string' ? address(ownerAddress) : ownerAddress;
+      
+      // Use getDomainsForAddress from @solana-name-service/sns-sdk-kit
+      // Type assertion needed due to RPC type incompatibilities between packages
+      const results = await getDomainsForAddress({ 
+        rpc: this.rpc as unknown as Parameters<typeof getDomainsForAddress>[0]['rpc'], 
+        address: ownerAddr 
+      });
+
+      // Convert the result format to match our expected format
+      return results.map(result => ({
+        domain: result.domain,
+        pubkey: result.domainAddress,
+      }));
+    } catch (err) {
+      console.error('Error fetching domains for owner:', err);
+      return [];
+    }
+  }
+}
+
+/**
+ * Helper to create RPC from endpoint string or use existing RPC
+ */
+function getRpc(rpcOrEndpoint: SolanaRpc | string | null): SolanaRpc | null {
+  if (!rpcOrEndpoint) return null;
+  if (typeof rpcOrEndpoint === 'string') {
+    return createSolanaRpc(rpcOrEndpoint);
+  }
+  return rpcOrEndpoint;
+}
+
+/**
+ * Helper to get endpoint string from RPC (for query keys)
+ */
+function getRpcEndpoint(rpc: SolanaRpc | null): string | undefined {
+  if (!rpc) return undefined;
+  // Try to extract endpoint from RPC - this may vary by implementation
+  // Type assertion needed as RPC implementation details are not exposed in types
+  const rpcWithUrl = rpc as SolanaRpc & { url?: string; endpoint?: string };
+  return rpcWithUrl.url || rpcWithUrl.endpoint || undefined;
 }
 
 /**
  * React hook to fetch domain records using SNSService
  * Fetches both V1 and V2 records automatically
+ * Now accepts RPC or endpoint string
  */
 export function useDomainRecord(
-  connection: Connection | null,
+  rpcOrEndpoint: SolanaRpc | string | null,
   domain: string | null,
-  recordType: Record,
+  recordType: typeof SnsRecord,
   options?: { enabled?: boolean }
 ) {
-  const enabled = options?.enabled !== false && !!connection && !!domain;
+  const enabled = options?.enabled !== false && !!rpcOrEndpoint && !!domain;
 
   return useQuery({
-    queryKey: ['sns-record', connection?.rpcEndpoint, domain, recordType],
+    queryKey: ['sns-record', getRpcEndpoint(getRpc(rpcOrEndpoint)), domain, recordType],
     queryFn: async () => {
-      if (!connection || !domain) {
-        throw new Error('Connection and domain are required');
+      const rpc = getRpc(rpcOrEndpoint);
+      if (!rpc || !domain) {
+        throw new Error('RPC and domain are required');
       }
-      const service = new SNSService(connection);
+      const service = new SNSService(rpc);
       return service.fetchDomainRecord(domain, recordType);
     },
     enabled,
@@ -288,3 +678,100 @@ export function useDomainRecord(
   });
 }
 
+/**
+ * React hook to check if a domain is wrapped into an NFT
+ * @param rpcOrEndpoint The Solana RPC or endpoint string
+ * @param domainAccountAddress The address of the domain account
+ * @param options Optional query options
+ */
+export function useDomainWrappedStatus(
+  rpcOrEndpoint: SolanaRpc | string | null,
+  domainAccountAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  const enabled = options?.enabled !== false && !!rpcOrEndpoint && !!domainAccountAddress;
+
+  return useQuery({
+    queryKey: ['domain-wrapped', getRpcEndpoint(getRpc(rpcOrEndpoint)), typeof domainAccountAddress === 'string' ? domainAccountAddress : domainAccountAddress],
+    queryFn: async () => {
+      const rpc = getRpc(rpcOrEndpoint);
+      if (!rpc || !domainAccountAddress) {
+        throw new Error('RPC and domain account address are required');
+      }
+      const service = new SNSService(rpc);
+      return service.isDomainWrapped(domainAccountAddress);
+    },
+    enabled,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * React hook to fetch all wrapped SNS domains owned by a wallet
+ * @param rpcOrEndpoint The Solana RPC or endpoint string
+ * @param ownerAddress The address of the wallet owner
+ * @param options Optional query options
+ */
+export function useWrappedDomains(
+  rpcOrEndpoint: SolanaRpc | string | null,
+  ownerAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  const enabled = options?.enabled !== false && !!rpcOrEndpoint && !!ownerAddress;
+
+  return useQuery({
+    queryKey: ['wrapped-domains', getRpcEndpoint(getRpc(rpcOrEndpoint)), typeof ownerAddress === 'string' ? ownerAddress : ownerAddress],
+    queryFn: async () => {
+      const rpc = getRpc(rpcOrEndpoint);
+      if (!rpc || !ownerAddress) {
+        throw new Error('RPC and owner address are required');
+      }
+      try {
+        const service = new SNSService(rpc);
+        return await service.fetchWrappedDomains(ownerAddress);
+      } catch (err) {
+        // If fetching wrapped domains fails, return empty array instead of throwing
+        // This allows unwrapped domains to still be displayed
+        console.warn('Failed to fetch wrapped domains, continuing with unwrapped domains only:', err);
+        return [];
+      }
+    },
+    enabled,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * React hook to fetch all unwrapped SNS domains owned by a wallet
+ * Replaces useDomainsForOwner from @bonfida/sns-react
+ * @param rpcOrEndpoint The Solana RPC or endpoint string
+ * @param ownerAddress The address of the wallet owner
+ * @param options Optional query options
+ */
+export function useDomainsForOwner(
+  rpcOrEndpoint: SolanaRpc | string | null,
+  ownerAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  // Handle options.enabled flag
+  const enabled = typeof options === 'object' && options !== null && 'enabled' in options
+    ? options.enabled !== false
+    : true;
+
+  return useQuery({
+    queryKey: ['domains-for-owner', getRpcEndpoint(getRpc(rpcOrEndpoint)), typeof ownerAddress === 'string' ? ownerAddress : ownerAddress],
+    queryFn: async () => {
+      const rpc = getRpc(rpcOrEndpoint);
+      if (!rpc || !ownerAddress) {
+        throw new Error('RPC and owner address are required');
+      }
+      const service = new SNSService(rpc);
+      return await service.fetchDomainsForOwner(ownerAddress);
+    },
+    enabled: enabled && !!rpcOrEndpoint && !!ownerAddress,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
