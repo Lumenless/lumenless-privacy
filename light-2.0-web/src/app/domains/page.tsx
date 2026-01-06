@@ -17,7 +17,6 @@ import {
   useDomainRecord, 
   useWrappedDomains, 
   useDomainsForOwner,
-  Record,
   SNSService
 } from '@/lib/sns-service';
 import { register } from '@bonfida/sub-register';
@@ -28,9 +27,9 @@ import {
   createRecord,
   validateRoa,
   writeRoa,
+  Record,
 } from '@solana-name-service/sns-sdk-kit';
 import { TransactionInstruction, Connection } from '@solana/web3.js';
-import { createSubdomain, getDomainKeySync, NameRegistryState, transferSubdomain, findSubdomains } from '@bonfida/spl-name-service';
 
 // Note: @bonfida/spl-name-service doesn't provide a wrapName function.
 // Wrapping domains to NFTs requires using the Metaplex Token Metadata program
@@ -719,13 +718,17 @@ function CreateSubdomainModal({ visible, onClose, parentDomain, onSuccess }: Cre
       // Create Connection from endpoint
       const connection = new Connection(endpoint, 'confirmed');
       
-      const parentDomainOwner = new PublicKey('FxKaUzVReCUDj3j46M73PeYpJYkkUmTzkUjh6uZ3Rgag'); // current owner of the lumenless.sol registrar
-      // const parentDomainOwner = new PublicKey('LUMbDFCxEi5XkJYsmEjvkRiHBkMTExYfZYGENKUZRAD'); // admin of the lumenless.sol
-      // const snsService = new SNSService(endpoint);
-      // const { parentDomainKey, parentDomainOwner, isRegistrar: parentIsRegistrar } = await snsService.getParentDomainOwner(parentDomain, endpoint);
-            
-      let fullySignedTx: Transaction;
+      // Check if subdomain is available before attempting to register
+      const snsService = new SNSService(endpoint);
+      const { available, existingOwner } = await snsService.isSubdomainAvailable(trimmedName, parentDomain, endpoint);
       
+      if (!available) {
+        const ownerStr = existingOwner ? existingOwner.toBase58() : 'unknown';
+        throw new Error(`Subdomain "${trimmedName}.${parentDomain}.sol" is already registered (owner: ${ownerStr==publicKey.toString() ? 'You' : `${ownerStr.slice(0, 4)}...${ownerStr.slice(-4)}`})`);
+      }
+      
+      const parentDomainOwner = new PublicKey('FxKaUzVReCUDj3j46M73PeYpJYkkUmTzkUjh6uZ3Rgag'); // current owner of the lumenless.sol registrar
+            
       // Normal case: parent domain is owned by a wallet, create subdomain directly
       const fullSubdomain = `${trimmedName}.${parentDomain}.sol`;
       console.log('Full subdomain:', fullSubdomain);

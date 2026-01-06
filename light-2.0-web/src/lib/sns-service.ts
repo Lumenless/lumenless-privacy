@@ -1,14 +1,10 @@
-// Fully migrated to @solana/kit - no @solana/web3.js dependencies
-import { createSolanaRpc, address, type Address as KitAddress, getProgramDerivedAddress } from '@solana/kit';
+import { createSolanaRpc, address, Address, getProgramDerivedAddress } from '@solana/kit';
 import { PublicKey, Connection } from '@solana/web3.js'; // Temporary - only for PDA derivation until kit has native support
 import { useQuery } from '@tanstack/react-query';
 import { bs58 } from '@coral-xyz/anchor/dist/cjs/utils/bytes';
-// Import Metaplex metadata serializer
-import { Collection, getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
-// Import from @bonfida/spl-name-service for domain owner detection
+import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
 import { getDomainKeySync, NameRegistryState } from '@bonfida/spl-name-service';
 
-// Import from @solana-name-service/sns-sdk-kit
 import {
   getDomainRecord,
   getDomainsForAddress,
@@ -17,20 +13,7 @@ import {
 
 // Type for RPC (return type of createSolanaRpc)
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
-type Address = KitAddress;
 
-// Helper functions to convert between Address and PublicKey
-function addressToPublicKey(addr: Address | string): PublicKey {
-  const addrStr = typeof addr === 'string' ? addr : addr;
-  return new PublicKey(addrStr);
-}
-
-function publicKeyToAddress(pubkey: PublicKey): Address {
-  return address(pubkey.toBase58());
-}
-
-// Export Record type for use in other files
-export { SnsRecord as Record };
 
 /**
  * Metaplex Token Metadata Program ID
@@ -630,6 +613,54 @@ export class SNSService {
       };
     } catch (err) {
       console.error('Error getting parent domain owner:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Checks if a subdomain is available for registration
+   * @param subdomain The subdomain name (e.g., "mike")
+   * @param parentDomain The parent domain name (e.g., "lumenless" or "lumenless.sol")
+   * @param endpoint The Solana RPC endpoint (required for Connection)
+   * @returns Promise with availability status and additional info
+   */
+  async isSubdomainAvailable(subdomain: string, parentDomain: string, endpoint: string): Promise<{
+    available: boolean;
+    subdomainKey: PublicKey;
+    existingOwner?: PublicKey;
+  }> {
+    try {
+      // Ensure parent domain has .sol suffix
+      const parentDomainFull = parentDomain.endsWith('.sol') ? parentDomain : `${parentDomain}.sol`;
+      
+      // Construct full subdomain: subdomain.parent.sol
+      const fullSubdomain = `${subdomain}.${parentDomainFull}`;
+      
+      // Get the subdomain account key
+      const { pubkey: subdomainKey } = getDomainKeySync(fullSubdomain);
+      
+      // Create Connection to fetch account info
+      const connection = new Connection(endpoint, 'confirmed');
+      const subdomainAccount = await connection.getAccountInfo(subdomainKey);
+      
+      // If no account exists, subdomain is available
+      if (!subdomainAccount) {
+        return {
+          available: true,
+          subdomainKey,
+        };
+      }
+      
+      // Subdomain exists, get the owner
+      const subdomainState = NameRegistryState.deserialize(Buffer.from(subdomainAccount.data));
+      
+      return {
+        available: false,
+        subdomainKey,
+        existingOwner: subdomainState.owner,
+      };
+    } catch (err) {
+      console.error('Error checking subdomain availability:', err);
       throw err;
     }
   }
