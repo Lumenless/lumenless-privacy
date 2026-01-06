@@ -1,10 +1,12 @@
 // Fully migrated to @solana/kit - no @solana/web3.js dependencies
 import { createSolanaRpc, address, type Address as KitAddress, getProgramDerivedAddress } from '@solana/kit';
-import { PublicKey } from '@solana/web3.js'; // Temporary - only for PDA derivation until kit has native support
+import { PublicKey, Connection } from '@solana/web3.js'; // Temporary - only for PDA derivation until kit has native support
 import { useQuery } from '@tanstack/react-query';
 import { bs58 } from '@coral-xyz/anchor/dist/cjs/utils/bytes';
 // Import Metaplex metadata serializer
 import { Collection, getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
+// Import from @bonfida/spl-name-service for domain owner detection
+import { getDomainKeySync, NameRegistryState } from '@bonfida/spl-name-service';
 
 // Import from @solana-name-service/sns-sdk-kit
 import {
@@ -453,7 +455,6 @@ export class SNSService {
 
         if (decimals !== 0 || amount !== '1') continue;
 
-        // if (mintStr != '431YLL6A2uW6W8KZp9CgGHi4EXPskjuXvV65sMsmPoJW') continue; //TODO: Remove this
         seen.add(mintStr);
         mints.push(address(mintStr));
       }
@@ -585,6 +586,51 @@ export class SNSService {
     } catch (err) {
       console.error('Error fetching domains for owner:', err);
       return [];
+    }
+  }
+
+  /**
+   * Gets the parent domain owner for a given domain
+   * @param domain The domain name (e.g., "lumenless.sol" or "lumenless")
+   * @param endpoint The Solana RPC endpoint (required for Connection)
+   * @returns Promise with the parent domain owner PublicKey and domain key
+   */
+  async getParentDomainOwner(domain: string, endpoint: string): Promise<{
+    parentDomainKey: PublicKey;
+    parentDomainOwner: PublicKey;
+    isRegistrar: boolean;
+  }> {
+    try {
+      // Ensure domain has .sol suffix
+      const parentDomainFull = domain.endsWith('.sol') ? domain : `${domain}.sol`;
+      
+      // Get the parent domain account key
+      const { pubkey: parentDomainKey } = getDomainKeySync(parentDomainFull);
+      
+      // Create Connection to fetch account info
+      const connection = new Connection(endpoint, 'confirmed');
+      const parentDomainAccount = await connection.getAccountInfo(parentDomainKey);
+      
+      if (!parentDomainAccount) {
+        throw new Error(`Parent domain ${parentDomainFull} not found`);
+      }
+      
+      // Get the owner from the parent domain account
+      const parentDomainState = NameRegistryState.deserialize(Buffer.from(parentDomainAccount.data));
+      const parentDomainOwner = parentDomainState.owner;
+      
+      // Check if parent is owned by a registrar (program)
+      const parentOwnerAccount = await connection.getAccountInfo(parentDomainOwner);
+      const isRegistrar = parentOwnerAccount?.executable === true;
+      
+      return {
+        parentDomainKey,
+        parentDomainOwner,
+        isRegistrar,
+      };
+    } catch (err) {
+      console.error('Error getting parent domain owner:', err);
+      throw err;
     }
   }
 }

@@ -17,8 +17,10 @@ import {
   useDomainRecord, 
   useWrappedDomains, 
   useDomainsForOwner,
-  Record 
+  Record,
+  SNSService
 } from '@/lib/sns-service';
+import { register } from '@bonfida/sub-register';
 
 // Import instructions and bindings from @solana-name-service/sns-sdk-kit
 import {
@@ -27,7 +29,13 @@ import {
   validateRoa,
   writeRoa,
 } from '@solana-name-service/sns-sdk-kit';
-import { TransactionInstruction } from '@solana/web3.js';
+import { TransactionInstruction, Connection } from '@solana/web3.js';
+import { createSubdomain, getDomainKeySync, NameRegistryState, transferSubdomain, findSubdomains } from '@bonfida/spl-name-service';
+
+// Note: @bonfida/spl-name-service doesn't provide a wrapName function.
+// Wrapping domains to NFTs requires using the Metaplex Token Metadata program
+// and transferring domain ownership to the NFT mint. This is a complex operation
+// that isn't directly supported by this package.
 
 // Helper to convert PublicKey to Address
 function publicKeyToAddress(pubkey: PublicKey): ReturnType<typeof address> {
@@ -457,21 +465,17 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey, isWrapped }: { domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean }) {
+function DomainItem({ domain, pubkey, isWrapped, onWrapSuccess }: { domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean; onWrapSuccess?: () => void }) {
   // Create RPC endpoint
   const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
     return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  
-  // Convert pubkey to address if needed
-  const domainAddress = useMemo(() => {
-    if (typeof pubkey === 'string') {
-      return pubkey;
-    }
-    return pubkey;
-  }, [pubkey]);
+  const [isWrapping, setIsWrapping] = useState(false);
+  const { account } = useAccount();
+  const { signer } = useTransactionSigner();
+  const queryClient = useQueryClient();
   
   // Use the SNS service to fetch both V1 and V2 records
   // Type assertion needed due to enum type mismatch between packages
@@ -506,6 +510,16 @@ function DomainItem({ domain, pubkey, isWrapped }: { domain: string; pubkey: str
     solRecordQuery.refetch();
   }, [solRecordQuery]);
 
+  const handleWrap = useCallback(async () => {
+    // TODO: Implement domain wrapping functionality
+    // Wrapping a domain to NFT requires:
+    // 1. Creating an NFT mint and metadata using Metaplex
+    // 2. Transferring domain ownership to the NFT mint
+    // 3. Setting up the NFT metadata to link to the domain
+    // This is a complex operation that requires multiple instructions
+    alert('Domain wrapping functionality is not yet implemented. This requires integrating with Metaplex Token Metadata program.');
+  }, []);
+
   return (
     <>
       <div className="rounded-lg border border-border bg-card/50 p-4 hover:bg-card/80 transition-colors">
@@ -529,14 +543,27 @@ function DomainItem({ domain, pubkey, isWrapped }: { domain: string; pubkey: str
               Domain: {typeof pubkey === 'string' ? pubkey : pubkey}
             </span>
           </div>
-          <a
-            href={`https://solscan.io/account/${typeof pubkey === 'string' ? pubkey : pubkey}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-primary hover:underline ml-4"
-          >
-            View →
-          </a>
+          <div className="flex items-center gap-2">
+            {!isWrapped && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={handleWrap}
+                disabled={isWrapping}
+                className="text-xs h-7 px-2"
+              >
+                {isWrapping ? 'Wrapping...' : 'Wrap to NFT'}
+              </Button>
+            )}
+            <a
+              href={`https://solscan.io/account/${typeof pubkey === 'string' ? pubkey : pubkey}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-primary hover:underline"
+            >
+              View →
+            </a>
+          </div>
         </div>
         
         {/* Records Section */}
@@ -604,6 +631,239 @@ function DomainItem({ domain, pubkey, isWrapped }: { domain: string; pubkey: str
   );
 }
 
+interface CreateSubdomainModalProps {
+  visible: boolean;
+  onClose: () => void;
+  parentDomain: string;
+  onSuccess: () => void;
+}
+
+function CreateSubdomainModal({ visible, onClose, parentDomain, onSuccess }: CreateSubdomainModalProps) {
+  // Create RPC endpoint
+  const endpoint = useMemo(() => {
+    const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    return customRpc || 'https://api.mainnet-beta.solana.com';
+  }, []);
+
+  const { account } = useAccount();
+  const { signer } = useTransactionSigner();
+  const ownerAddress = useMemo(() => account ? account.address : null, [account]);
+  const publicKey = useMemo(() => ownerAddress ? new PublicKey(ownerAddress) : null, [ownerAddress]);
+  
+  const queryClient = useQueryClient();
+  const [subdomainName, setSubdomainName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [successTx, setSuccessTx] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Close modal when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+
+    if (visible) {
+      document.addEventListener('mousedown', handleClickOutside);
+      setSubdomainName('');
+      setError(null);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [visible, onClose]);
+
+  // Create a signTransaction function compatible with the existing code
+  const signTransaction = useMemo(() => {
+    if (!signer) return null;
+    return async (params: { transaction: Uint8Array }) => {
+      const tx = Transaction.from(params.transaction);
+      const signed = await signer.signTransaction(tx);
+      // Handle different return types
+      if (signed instanceof Transaction || signed instanceof VersionedTransaction) {
+        return Buffer.from(signed.serialize()).toString('base64');
+      }
+      // If it's already a Uint8Array or similar
+      if (signed instanceof Uint8Array) {
+        return Buffer.from(signed).toString('base64');
+      }
+      throw new Error('Unexpected transaction type from signer');
+    };
+  }, [signer]);
+
+  const handleCreate = useCallback(async () => {
+    if (!publicKey || !subdomainName.trim()) {
+      setError('Please enter a valid subdomain name');
+      return;
+    }
+
+    // Validate subdomain name (basic validation)
+    const trimmedName = subdomainName.trim().toLowerCase();
+    if (!/^[a-z0-9-]+$/.test(trimmedName)) {
+      setError('Subdomain name can only contain lowercase letters, numbers, and hyphens');
+      return;
+    }
+
+    if (trimmedName.length < 1 || trimmedName.length > 63) {
+      setError('Subdomain name must be between 1 and 63 characters');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setError(null);
+
+      // Create Connection from endpoint
+      const connection = new Connection(endpoint, 'confirmed');
+      
+      const parentDomainOwner = new PublicKey('FxKaUzVReCUDj3j46M73PeYpJYkkUmTzkUjh6uZ3Rgag'); // current owner of the lumenless.sol registrar
+      // const parentDomainOwner = new PublicKey('LUMbDFCxEi5XkJYsmEjvkRiHBkMTExYfZYGENKUZRAD'); // admin of the lumenless.sol
+      // const snsService = new SNSService(endpoint);
+      // const { parentDomainKey, parentDomainOwner, isRegistrar: parentIsRegistrar } = await snsService.getParentDomainOwner(parentDomain, endpoint);
+            
+      let fullySignedTx: Transaction;
+      
+      // Normal case: parent domain is owned by a wallet, create subdomain directly
+      const fullSubdomain = `${trimmedName}.${parentDomain}.sol`;
+      console.log('Full subdomain:', fullSubdomain);
+      console.log('Parent domain owner:', parentDomainOwner.toBase58());
+
+      const createSubdomainInstructions = await register(
+        connection,
+        parentDomainOwner,
+        publicKey,
+        PublicKey.default,
+        trimmedName,
+      );
+
+      const transaction = new Transaction();
+      transaction.add(...createSubdomainInstructions);
+      transaction.feePayer = publicKey;
+
+      // Get recent blockhash
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+
+      // Sign and send transaction
+      if (!signTransaction) {
+        throw new Error('Wallet does not support signing transactions');
+      }
+
+      // Have the user wallet sign
+      const userSignedTx = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      const rawTx = Buffer.from(userSignedTx, 'base64');
+      
+      const sig = await connection.sendRawTransaction(rawTx, {
+        skipPreflight: false,
+        maxRetries: 0,
+      });
+      
+      // Wait for confirmation using Connection
+      await connection.confirmTransaction(sig, 'confirmed');
+
+      setSuccessTx(sig);
+
+      // Invalidate queries to refetch domains
+      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+
+      // Wait a bit before closing to show success
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+        setSubdomainName('');
+        setSuccessTx(null);
+      }, 1500);
+    } catch (err: unknown) {
+      console.error('Error creating subdomain:', err);
+      setError(err instanceof Error ? err.message : 'Failed to create subdomain. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [publicKey, subdomainName, parentDomain, endpoint, signTransaction, queryClient, onSuccess, onClose]);
+
+  if (!visible) return null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      
+      {/* Modal */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <Card ref={modalRef} className="w-full max-w-md p-6 bg-white shadow-xl">
+          <h3 className="text-lg font-semibold mb-4">Create Subdomain</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Create a new subdomain under <strong>{parentDomain}.sol</strong>
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Subdomain Name</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  placeholder="e.g., mike"
+                  value={subdomainName}
+                  onChange={(e) => {
+                    setError(null);
+                    setSubdomainName(e.target.value.toLowerCase());
+                  }}
+                  className={error ? 'border-destructive' : ''}
+                  disabled={isProcessing}
+                />
+                <span className="text-sm text-muted-foreground whitespace-nowrap">
+                  .{parentDomain}.sol
+                </span>
+              </div>
+              {error && (
+                <p className="text-xs text-destructive mt-1">{error}</p>
+              )}
+              {successTx && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <p className="text-green-800 font-medium">✓ Subdomain created successfully!</p>
+                  <a
+                    href={`https://solscan.io/tx/${successTx}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-green-600 hover:underline mt-1 inline-block"
+                  >
+                    View transaction →
+                  </a>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-2">
+                The subdomain will be: <strong>{subdomainName.trim() || '...'}.{parentDomain}.sol</strong>
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isProcessing}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreate}
+                disabled={isProcessing || !subdomainName.trim()}
+              >
+                {isProcessing ? 'Creating...' : 'Create Subdomain'}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </>
+  );
+}
+
 function DomainsView() {
   // Create RPC endpoint
   const endpoint = useMemo(() => {
@@ -614,6 +874,8 @@ function DomainsView() {
   const { connected } = useConnector();
   const { account } = useAccount();
   const ownerAddress = useMemo(() => account ? account.address : null, [account]);
+  const [createSubdomainModalVisible, setCreateSubdomainModalVisible] = useState(false);
+  const queryClient = useQueryClient();
   
   // Use our custom hook to fetch unwrapped domains (replaces @bonfida/sns-react)
   // The hook returns { data, isLoading, error } structure
@@ -702,10 +964,23 @@ function DomainsView() {
       {/* Main */}
       <main className="px-4 md:px-8 py-8 flex justify-center">
         <Card className="w-full max-w-2xl p-6 border border-border shadow-xl">
-          <h2 className="text-2xl font-semibold mb-2">My SNS Domains</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            View all your Solana Name Service domains
-          </p>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-semibold mb-2">My SNS Domains</h2>
+              <p className="text-sm text-muted-foreground">
+                View all your Solana Name Service domains
+              </p>
+            </div>
+            {connected && (
+              <Button
+                onClick={() => setCreateSubdomainModalVisible(true)}
+                variant="default"
+                className="ml-4"
+              >
+                Create Subdomain
+              </Button>
+            )}
+          </div>
 
           {!connected && (
             <div className="text-center py-12">
@@ -766,6 +1041,17 @@ function DomainsView() {
           )}
         </Card>
       </main>
+
+      <CreateSubdomainModal
+        visible={createSubdomainModalVisible}
+        onClose={() => setCreateSubdomainModalVisible(false)}
+        parentDomain="lumenless"
+        onSuccess={() => {
+          // Invalidate queries to refresh the domains list
+          queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+          queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+        }}
+      />
     </div>
   );
 }

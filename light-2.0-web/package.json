@@ -11,6 +11,8 @@
     "dev:clean": "npm run clean && npm run dev"
   },
   "dependencies": {
+    "@bonfida/spl-name-service": "^3.0.16",
+    "@bonfida/sub-register": "^0.1.0",
     "@coral-xyz/anchor": "^0.32.1",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@radix-ui/react-slot": "^1.2.3",
