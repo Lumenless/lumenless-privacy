@@ -14,7 +14,6 @@ import {
 // Type for RPC (return type of createSolanaRpc)
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
 
-
 /**
  * Metaplex Token Metadata Program ID
  * Used to check if a domain is wrapped into an NFT

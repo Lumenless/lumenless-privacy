@@ -20,6 +20,7 @@ import {
   SNSService
 } from '@/lib/sns-service';
 import { register } from '@bonfida/sub-register';
+import { transferSubdomain } from '@bonfida/spl-name-service';
 
 // Import instructions and bindings from @solana-name-service/sns-sdk-kit
 import {
@@ -878,7 +879,79 @@ function DomainsView() {
   const { account } = useAccount();
   const ownerAddress = useMemo(() => account ? account.address : null, [account]);
   const [createSubdomainModalVisible, setCreateSubdomainModalVisible] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferStatus, setTransferStatus] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  // Test transfer function - transfers gm.lumenless.sol to a new wallet
+  const handleTestTransfer = useCallback(async () => {
+    try {
+      setIsTransferring(true);
+      setTransferStatus('Preparing transfer...');
+      
+      const connection = new Connection(endpoint, 'confirmed');
+      
+      // Subdomain to transfer
+      const subdomain = 'gm.lumenless.sol';
+      // New owner address
+      const currentOwner = new PublicKey('9Xt9Zj9HoAh13MpoB6hmY9UZz37L4Jabtyn8zE7AAsL');
+      const newOwner = new PublicKey('FUCww3SgAmqiP4CswfgY2r2Nsf6PPzARrXraEnGCn4Ln');
+      
+      // Registry admin private key (base58 encoded)
+      const adminPrivateKey = process.env.NEXT_PUBLIC_REGISTRAR_AUTHORITY_PRIVATE_KEY;
+      if (!adminPrivateKey) {
+        throw new Error('Admin private key not found');
+      }
+      const adminKeypair = Keypair.fromSecretKey(bs58.decode(adminPrivateKey));
+      
+      console.log('Admin public key:', adminKeypair.publicKey.toBase58());
+      console.log('Transferring', subdomain, 'to', newOwner.toBase58());
+      
+      // isParentOwnerSigner = false means the current subdomain owner signs
+      // owner = adminKeypair.publicKey is the current owner of the subdomain
+      const transferIx = await transferSubdomain(
+        connection,
+        subdomain,
+        newOwner,
+        true, // isParentOwnerSigner - subdomain owner signs, not parent owner
+        currentOwner, // current owner of the subdomain
+      );
+      
+      const transaction = new Transaction();
+      transaction.add(transferIx);
+      transaction.feePayer = adminKeypair.publicKey;
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      
+      // Sign with admin keypair
+      transaction.sign(adminKeypair);
+      
+      setTransferStatus('Sending transaction...');
+      
+      const sig = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+      
+      setTransferStatus(`Confirming... (${sig.slice(0, 8)}...)`);
+      
+      await connection.confirmTransaction(sig, 'confirmed');
+      
+      setTransferStatus(`Success! TX: ${sig.slice(0, 8)}...${sig.slice(-8)}`);
+      console.log('Transfer successful:', sig);
+      
+      // Refresh domains list
+      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+      
+    } catch (err) {
+      console.error('Transfer error:', err);
+      setTransferStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsTransferring(false);
+    }
+  }, [endpoint, queryClient]);
   
   // Use our custom hook to fetch unwrapped domains (replaces @bonfida/sns-react)
   // The hook returns { data, isLoading, error } structure
@@ -975,13 +1048,29 @@ function DomainsView() {
               </p>
             </div>
             {connected && (
-              <Button
-                onClick={() => setCreateSubdomainModalVisible(true)}
-                variant="default"
-                className="ml-4"
-              >
-                Create Subdomain
-              </Button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => setCreateSubdomainModalVisible(true)}
+                    variant="default"
+                  >
+                    Create Subdomain
+                  </Button>
+                  <Button
+                    onClick={handleTestTransfer}
+                    variant="outline"
+                    disabled={isTransferring}
+                    className="text-orange-600 border-orange-600 hover:bg-orange-50"
+                  >
+                    {isTransferring ? 'Transferring...' : 'Test Transfer'}
+                  </Button>
+                </div>
+                {transferStatus && (
+                  <p className={`text-xs ${transferStatus.startsWith('Error') ? 'text-red-600' : transferStatus.startsWith('Success') ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {transferStatus}
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
