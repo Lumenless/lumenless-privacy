@@ -3,7 +3,7 @@ import { PublicKey, Connection } from '@solana/web3.js'; // Temporary - only for
 import { useQuery } from '@tanstack/react-query';
 import { bs58 } from '@coral-xyz/anchor/dist/cjs/utils/bytes';
 import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
-import { getDomainKeySync, NameRegistryState } from '@bonfida/spl-name-service';
+import { getDomainKeySync, NameRegistryState, reverseLookupBatch, NAME_PROGRAM_ID, findSubdomains } from '@bonfida/spl-name-service';
 
 import {
   getDomainRecord,
@@ -663,6 +663,104 @@ export class SNSService {
       throw err;
     }
   }
+
+  /**
+   * Fetches all subdomains owned by a wallet for a specific parent domain
+   * Uses findSubdomains from bonfida library, then filters by owner
+   * @param ownerAddress The wallet address
+   * @param parentDomain The parent domain (e.g., "lumenless")
+   * @param endpoint The Solana RPC endpoint
+   * @returns Promise with array of subdomains owned by the wallet
+   */
+  async fetchSubdomainsForOwnerByParent(
+    ownerAddress: string,
+    parentDomain: string,
+    endpoint: string
+  ): Promise<Array<{ domain: string; pubkey: string; parentDomain: string; isSubdomain: true }>> {
+    try {
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(ownerAddress);
+      
+      // Get the parent domain key
+      const { pubkey: parentKey } = getDomainKeySync(parentDomain);
+      
+      console.log(`[SNS] Fetching subdomains for parent: ${parentDomain}, key: ${parentKey.toBase58()}`);
+      
+      // Use findSubdomains to get all subdomains under this parent
+      const allSubdomainNames = await findSubdomains(connection, parentKey);
+      
+      console.log(`[SNS] Found ${allSubdomainNames.length} total subdomains under ${parentDomain}:`, allSubdomainNames);
+      
+      if (allSubdomainNames.length === 0) {
+        return [];
+      }
+      
+      // For each subdomain, check if owned by the wallet
+      const ownedSubdomains: Array<{ domain: string; pubkey: string; parentDomain: string; isSubdomain: true }> = [];
+      
+      for (const subName of allSubdomainNames) {
+        try {
+          // Get the subdomain key
+          const fullSubdomain = `${subName}.${parentDomain}`;
+          const { pubkey: subKey } = getDomainKeySync(fullSubdomain);
+          
+          // Fetch the registry state to check owner
+          const { registry } = await NameRegistryState.retrieve(connection, subKey);
+          
+          if (registry.owner.equals(ownerPubkey)) {
+            console.log(`[SNS] Subdomain ${fullSubdomain} is owned by wallet`);
+            ownedSubdomains.push({
+              domain: subName,
+              pubkey: subKey.toBase58(),
+              parentDomain: parentDomain,
+              isSubdomain: true,
+            });
+          }
+        } catch (subErr) {
+          // Skip if subdomain doesn't exist or can't be fetched
+          console.log(`[SNS] Could not fetch subdomain ${subName}: ${subErr}`);
+        }
+      }
+      
+      console.log(`[SNS] Found ${ownedSubdomains.length} subdomains owned by wallet under ${parentDomain}`);
+      
+      return ownedSubdomains;
+    } catch (err) {
+      console.error('Error fetching subdomains for owner:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Fetches all subdomains owned by a wallet (across known parent domains)
+   * Currently checks lumenless.sol - can be extended to other parents
+   * @param ownerAddress The wallet address
+   * @param endpoint The Solana RPC endpoint
+   * @returns Promise with array of all subdomains owned by the wallet
+   */
+  async fetchAllSubdomainsForOwner(
+    ownerAddress: string,
+    endpoint: string
+  ): Promise<Array<{ domain: string; pubkey: string; parentDomain: string; isSubdomain: true }>> {
+    // List of parent domains to check for subdomains
+    // Add more parent domains here as needed
+    const parentDomainsToCheck = ['lumenless'];
+    
+    const allSubdomains: Array<{ domain: string; pubkey: string; parentDomain: string; isSubdomain: true }> = [];
+    
+    for (const parent of parentDomainsToCheck) {
+      try {
+        const subdomains = await this.fetchSubdomainsForOwnerByParent(ownerAddress, parent, endpoint);
+        allSubdomains.push(...subdomains);
+      } catch (err) {
+        console.error(`[SNS] Error fetching subdomains for parent ${parent}:`, err);
+        // Continue with other parents
+      }
+    }
+    
+    console.log(`[SNS] Total subdomains found for wallet: ${allSubdomains.length}`);
+    return allSubdomains;
+  }
 }
 
 /**
@@ -781,6 +879,37 @@ export function useDomainsForOwner(
       return await service.fetchDomainsForOwner(ownerAddress);
     },
     enabled: enabled && !!rpcOrEndpoint && !!ownerAddress,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * React hook to fetch all subdomains owned by a wallet (across all parent domains)
+ * @param endpoint The Solana RPC endpoint string
+ * @param ownerAddress The address of the wallet owner
+ * @param options Optional query options
+ */
+export function useSubdomainsForOwner(
+  endpoint: string | null,
+  ownerAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  console.log('useSubdomainsForOwner', ownerAddress, options);
+  const enabled = options?.enabled !== false && !!endpoint && !!ownerAddress;
+  // Address type is a branded string, so we can use it directly as string
+  const ownerStr = ownerAddress ? String(ownerAddress) : '';
+
+  return useQuery({
+    queryKey: ['subdomains-for-owner', endpoint, ownerStr],
+    queryFn: async () => {
+      if (!endpoint || !ownerAddress) {
+        throw new Error('Endpoint and owner address are required');
+      }
+      const service = new SNSService(endpoint);
+      return await service.fetchAllSubdomainsForOwner(ownerStr, endpoint);
+    },
+    enabled,
     retry: 1,
     refetchOnWindowFocus: false,
   });

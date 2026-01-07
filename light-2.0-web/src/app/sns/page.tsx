@@ -17,6 +17,7 @@ import {
   useDomainRecord, 
   useWrappedDomains, 
   useDomainsForOwner,
+  useSubdomainsForOwner,
   SNSService
 } from '@/lib/sns-service';
 import { register } from '@bonfida/sub-register';
@@ -465,7 +466,14 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey, isWrapped, onWrapSuccess }: { domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean; onWrapSuccess?: () => void }) {
+function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWrapSuccess }: { 
+  domain: string; 
+  pubkey: string | ReturnType<typeof address>; 
+  isWrapped: boolean; 
+  isSubdomain?: boolean;
+  parentDomain?: string;
+  onWrapSuccess?: () => void;
+}) {
   // Create RPC endpoint
   const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
@@ -477,9 +485,12 @@ function DomainItem({ domain, pubkey, isWrapped, onWrapSuccess }: { domain: stri
   const { signer } = useTransactionSigner();
   const queryClient = useQueryClient();
   
+  // Full domain name for display and record queries
+  const fullDomain = isSubdomain && parentDomain ? `${domain}.${parentDomain}` : domain;
+  
   // Use the SNS service to fetch both V1 and V2 records
   // Type assertion needed due to enum type mismatch between packages
-  const solRecordQuery = useDomainRecord(endpoint, domain, Record.SOL as unknown as typeof Record);
+  const solRecordQuery = useDomainRecord(endpoint, fullDomain, Record.SOL as unknown as typeof Record);
   
   // Extract data from the query result
   const solAddress = solRecordQuery.data?.address || null;
@@ -527,9 +538,13 @@ function DomainItem({ domain, pubkey, isWrapped, onWrapSuccess }: { domain: stri
           <div className="flex flex-col flex-1">
             <div className="flex items-center gap-2">
               <span className="font-medium text-lg">
-                {domain}.sol
+                {isSubdomain && parentDomain ? `${domain}.${parentDomain}.sol` : `${domain}.sol`}
               </span>
-               {isWrapped ? (
+               {isSubdomain ? (
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium" title="This is a subdomain">
+                  Subdomain
+                </span>
+              ) : isWrapped ? (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium" title="This domain is wrapped into an NFT">
                   NFT
                 </span>
@@ -964,6 +979,26 @@ function DomainsView() {
   // Fetch wrapped domains (domains that have been wrapped into NFTs)
   const wrappedDomains = useWrappedDomains(endpoint, ownerAddress);
 
+  // Fetch all subdomains owned by the user (across all parent domains)
+  const subdomains = useSubdomainsForOwner(
+    endpoint,
+    ownerAddress,
+    { enabled: ownerAddress !== null }
+  );
+
+  // Debug logging for subdomains
+  useEffect(() => {
+    console.log('[DomainsView] Subdomains query state:', {
+      ownerAddress,
+      enabled: ownerAddress !== null,
+      isLoading: subdomains.isLoading,
+      isFetching: subdomains.isFetching,
+      error: subdomains.error,
+      data: subdomains.data,
+      dataLength: subdomains.data?.length || 0,
+    });
+  }, [ownerAddress, subdomains.isLoading, subdomains.isFetching, subdomains.error, subdomains.data]);
+
   // Debug logging for wrapped domains
   useEffect(() => {
     if (connected && ownerAddress && wrappedDomains.data !== undefined) {
@@ -976,26 +1011,63 @@ function DomainsView() {
     }
   }, [connected, ownerAddress, wrappedDomains.isLoading, wrappedDomains.error, wrappedDomains.data]);
 
-  // Combine both unwrapped and wrapped domains with their wrapped status
+  // Debug logging for subdomains
+  useEffect(() => {
+    if (connected && ownerAddress && subdomains.data !== undefined) {
+      console.log('[DomainsView] Subdomains query:', {
+        isLoading: subdomains.isLoading,
+        error: subdomains.error,
+        data: subdomains.data,
+        count: subdomains.data?.length || 0,
+      });
+    }
+  }, [connected, ownerAddress, subdomains.isLoading, subdomains.error, subdomains.data]);
+
+  // Combine unwrapped, wrapped, and subdomains with their status
   const allDomains = useMemo(() => {
-    const domainsList: Array<{ domain: string; pubkey: string | ReturnType<typeof address>; isWrapped: boolean }> = [];
+    const domainsList: Array<{ 
+      domain: string; 
+      pubkey: string | ReturnType<typeof address>; 
+      isWrapped: boolean;
+      isSubdomain: boolean;
+      parentDomain?: string;
+    }> = [];
     
-    // Add unwrapped domains (isWrapped: false)
+    // Add unwrapped domains (isWrapped: false, isSubdomain: false)
     if (unwrappedDomains.data) {
-      domainsList.push(...unwrappedDomains.data.map(d => ({ ...d, isWrapped: false })));
+      domainsList.push(...unwrappedDomains.data.map(d => ({ 
+        ...d, 
+        isWrapped: false,
+        isSubdomain: false,
+      })));
     }
     
-    // Add wrapped domains (isWrapped: true)
+    // Add wrapped domains (isWrapped: true, isSubdomain: false)
     if (wrappedDomains.data) {
-      domainsList.push(...wrappedDomains.data.map(d => ({ ...d, isWrapped: true })));
+      domainsList.push(...wrappedDomains.data.map(d => ({ 
+        ...d, 
+        isWrapped: true,
+        isSubdomain: false,
+      })));
+    }
+    
+    // Add subdomains (isWrapped: false, isSubdomain: true)
+    if (subdomains.data) {
+      domainsList.push(...subdomains.data.map(d => ({ 
+        domain: d.domain,
+        pubkey: d.pubkey,
+        isWrapped: false,
+        isSubdomain: true,
+        parentDomain: d.parentDomain,
+      })));
     }
     
     return domainsList;
-  }, [unwrappedDomains.data, wrappedDomains.data]);
+  }, [unwrappedDomains.data, wrappedDomains.data, subdomains.data]);
 
   // Combined loading state
-  const isLoading = unwrappedDomains.isLoading || wrappedDomains.isLoading;
-  const error = unwrappedDomains.error || wrappedDomains.error;
+  const isLoading = unwrappedDomains.isLoading || wrappedDomains.isLoading || subdomains.isLoading;
+  const error = unwrappedDomains.error || wrappedDomains.error || subdomains.error;
 
   // Debug logging - log domains list to console
   useEffect(() => {
@@ -1007,6 +1079,7 @@ function DomainsView() {
       
       console.log('Unwrapped Domains:', unwrappedDomains.data?.length || 0);
       console.log('Wrapped Domains:', wrappedDomains.data?.length || 0);
+      console.log('Subdomains:', subdomains.data?.length || 0);
       
       if (allDomains.length > 0) {
         console.log('Total Domains Found:', allDomains.length);
@@ -1022,7 +1095,7 @@ function DomainsView() {
       }
       console.log('========================');
     }
-  }, [connected, ownerAddress, isLoading, error, allDomains, unwrappedDomains.data, wrappedDomains.data]);
+  }, [connected, ownerAddress, isLoading, error, allDomains, unwrappedDomains.data, wrappedDomains.data, subdomains.data]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -1126,6 +1199,8 @@ function DomainsView() {
                     domain={domainItem.domain}
                     pubkey={pubkeyStr}
                     isWrapped={domainItem.isWrapped}
+                    isSubdomain={domainItem.isSubdomain}
+                    parentDomain={domainItem.parentDomain}
                   />
                 );
               })}
