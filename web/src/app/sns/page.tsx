@@ -5,7 +5,7 @@
 // Set to true to enable the /sns route
 // Set to false to disable (returns 404)
 // ============================================
-const SNS_ROUTE_ENABLED = false;
+const SNS_ROUTE_ENABLED = true;
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { notFound } from 'next/navigation';
