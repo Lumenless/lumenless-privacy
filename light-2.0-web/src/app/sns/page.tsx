@@ -1,6 +1,14 @@
 'use client';
 
+// ============================================
+// FEATURE FLAG: SNS Route Enabled
+// Set to true to enable the /sns route
+// Set to false to disable (returns 404)
+// ============================================
+const SNS_ROUTE_ENABLED = false;
+
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { notFound } from 'next/navigation';
 import Image from 'next/image';
 import { createSolanaRpc, address, type Instruction, type Base64EncodedWireTransaction } from '@solana/kit';
 import { PublicKey, Keypair, Transaction, VersionedTransaction } from '@solana/web3.js'; // Temporary - for Keypair and transaction building until kit has full support
@@ -131,6 +139,11 @@ import { WalletButton } from '@/components/WalletButton';
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 
 export default function AppPage() {
+  // Check if the SNS route is enabled
+  if (!SNS_ROUTE_ENABLED) {
+    notFound();
+  }
+
   // Create a QueryClient instance for React Query
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
