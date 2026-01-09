@@ -899,3 +899,211 @@ export function useSubdomainsForOwner(
     refetchOnWindowFocus: false,
   });
 }
+
+/**
+ * React hook to fetch all secured (vaulted) SNS domains for a user
+ * These are domains that have been deposited into the user's vault PDA
+ * @param endpoint The Solana RPC endpoint string
+ * @param ownerAddress The address of the wallet owner
+ * @param options Optional query options
+ */
+export function useSecuredDomains(
+  endpoint: string | null,
+  ownerAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  const enabled = options?.enabled !== false && !!endpoint && !!ownerAddress;
+  const ownerStr = ownerAddress ? String(ownerAddress) : '';
+
+  return useQuery({
+    queryKey: ['secured-domains', endpoint, ownerStr],
+    queryFn: async () => {
+      if (!endpoint || !ownerAddress) {
+        throw new Error('Endpoint and owner address are required');
+      }
+      
+      // Import vault service dynamically to avoid circular dependencies
+      const { fetchVaultNFTMints, fetchVaultUnwrappedDomains } = await import('./vault-service');
+      const { Connection, PublicKey } = await import('@solana/web3.js');
+      const { reverseLookup } = await import('@bonfida/spl-name-service');
+      
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(ownerStr);
+      
+      // Import getVaultPDA to log the vault address
+      const { getVaultPDA } = await import('./vault-service');
+      const [vaultPDA] = getVaultPDA(ownerPubkey);
+      console.log(`[useSecuredDomains] 🔐 Your Vault PDA Address: ${vaultPDA.toBase58()}`);
+      
+      const securedDomains: Array<{ domain: string; pubkey: string; mintAddress?: string; isWrapped: boolean; isSubdomain: boolean; parentDomain?: string }> = [];
+      
+      // SOL TLD parent: 58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx
+      const SOL_TLD_PARENT = '58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx';
+      
+      // ========== 1. Fetch wrapped (NFT) domains from vault ==========
+      const nftMints = await fetchVaultNFTMints(connection, ownerPubkey);
+      console.log(`[useSecuredDomains] Found ${nftMints.length} NFTs in vault`);
+      
+      if (nftMints.length > 0) {
+        // Process mints in batches
+        const batchSize = 100;
+        const batches = chunk(nftMints, batchSize);
+        
+        for (const batch of batches) {
+          // Get metadata PDAs for all mints in this batch
+          const pairs = await Promise.all(
+            batch.map(async (mintStr) => {
+              const mint = address(mintStr);
+              const mdPda = await findMetadataPda(mint);
+              return { mint: mintStr, mdPda };
+            })
+          );
+          
+          // Fetch metadata accounts
+          const rpc = getRpc(endpoint);
+          if (!rpc) continue;
+          
+          const accounts = await rpc.getMultipleAccounts(
+            pairs.map(p => p.mdPda), 
+            { encoding: 'base64' }
+          ).send();
+          
+          for (let i = 0; i < pairs.length; i++) {
+            const acc = accounts?.value?.[i];
+            const mintStr = pairs[i].mint;
+            
+            if (!acc) continue;
+            
+            const buf = decodeAccountDataToBuffer(acc.data);
+            if (!buf) continue;
+            
+            try {
+              const serializer = getMetadataAccountDataSerializer();
+              const bytes = new Uint8Array(buf);
+              const metadataData = serializer.deserialize(bytes)[0];
+              const name = cleanStr(metadataData.name);
+              
+              const collection = metadataData.collection.__option === 'Some' 
+                ? metadataData.collection.value 
+                : undefined;
+              
+              // Check if it's from the SOL domain collection
+              if (!collection || collection.key.toString() !== SOL_DOMAIN_COLLECTION_ADDRESS) {
+                console.log(`[useSecuredDomains] Skipping NFT ${mintStr} - not from SOL domain collection`);
+                continue;
+              }
+              
+              console.log(`[useSecuredDomains] ✓ Found secured wrapped domain: ${name}.sol (mint: ${mintStr})`);
+              securedDomains.push({
+                domain: name,
+                pubkey: mintStr,
+                mintAddress: mintStr,
+                isWrapped: true,
+                isSubdomain: false, // Wrapped domains from collection are TLDs
+              });
+            } catch (err) {
+              console.error(`[useSecuredDomains] Error parsing metadata for mint ${mintStr}:`, err);
+              continue;
+            }
+          }
+        }
+      }
+      
+      // ========== 2. Fetch unwrapped domains/subdomains from vault ==========
+      const unwrappedDomains = await fetchVaultUnwrappedDomains(connection, ownerPubkey);
+      console.log(`[useSecuredDomains] Found ${unwrappedDomains.length} unwrapped name accounts in vault`);
+      
+      // Import findSubdomains to help identify subdomain names
+      const { findSubdomains: findSubdomainsForParent } = await import('@bonfida/spl-name-service');
+      
+      for (const { nameAccount, parentName } of unwrappedDomains) {
+        try {
+          const nameAccountPubkey = new PublicKey(nameAccount);
+          
+          // Check if it's a subdomain (parent is not SOL TLD and not default)
+          const isSubdomain = parentName !== SOL_TLD_PARENT && parentName !== PublicKey.default.toBase58();
+          
+          let domainName: string = 'unknown';
+          let parentDomainName: string | undefined;
+          
+          if (isSubdomain) {
+            // For subdomains:
+            // 1. Get the parent domain name via reverse lookup
+            // 2. Find subdomains of that parent to match our account
+            try {
+              // Get parent domain name first
+              const parentPubkey = new PublicKey(parentName);
+              parentDomainName = await reverseLookup(connection, parentPubkey);
+              console.log(`[useSecuredDomains] Parent domain resolved: ${parentDomainName}.sol`);
+              
+              // Find all subdomains of this parent to get the name
+              try {
+                const subdomainsOfParent = await findSubdomainsForParent(connection, parentPubkey);
+                console.log(`[useSecuredDomains] Found ${subdomainsOfParent.length} subdomains for parent ${parentDomainName}`);
+                
+                // Look for our subdomain account in the list
+                // findSubdomains returns string[] of subdomain names
+                for (const subName of subdomainsOfParent) {
+                  // Derive the subdomain key from the name
+                  const { pubkey: derivedKey } = getDomainKeySync(`${subName}.${parentDomainName}`);
+                  if (derivedKey.toBase58() === nameAccount) {
+                    domainName = subName;
+                    console.log(`[useSecuredDomains] ✓ Matched subdomain name: ${domainName}`);
+                    break;
+                  }
+                }
+                
+                if (domainName === 'unknown') {
+                  // Subdomain not in parent's list - might be a nested subdomain or deleted
+                  domainName = `secured-sub`;
+                }
+              } catch (findErr) {
+                console.error(`[useSecuredDomains] Error finding subdomains:`, findErr);
+                domainName = `secured-sub`;
+              }
+              
+              console.log(`[useSecuredDomains] ✓ Found secured subdomain: ${domainName}.${parentDomainName}.sol (nameAccount: ${nameAccount})`);
+            } catch (subErr) {
+              console.error(`[useSecuredDomains] Error resolving subdomain parent ${nameAccount}:`, subErr);
+              domainName = `secured-subdomain`;
+              console.log(`[useSecuredDomains] ✓ Found secured subdomain (unknown parent): ${nameAccount}`);
+            }
+          } else {
+            // Regular domain - reverse lookup should work
+            try {
+              domainName = await reverseLookup(connection, nameAccountPubkey);
+              console.log(`[useSecuredDomains] ✓ Found secured domain: ${domainName}.sol (nameAccount: ${nameAccount})`);
+            } catch (err) {
+              console.error(`[useSecuredDomains] Error with reverse lookup for domain ${nameAccount}:`, err);
+              domainName = `secured-${nameAccount.slice(0, 8)}`;
+            }
+          }
+          
+          securedDomains.push({
+            domain: domainName,
+            pubkey: nameAccount,
+            isWrapped: false,
+            isSubdomain,
+            parentDomain: parentDomainName,
+          });
+        } catch (err) {
+          console.error(`[useSecuredDomains] Error processing name account ${nameAccount}:`, err);
+          // Still add it so user can see something is secured
+          securedDomains.push({
+            domain: `secured-${nameAccount.slice(0, 8)}`,
+            pubkey: nameAccount,
+            isWrapped: false,
+            isSubdomain: false,
+          });
+        }
+      }
+      
+      console.log(`[useSecuredDomains] ✓ Found ${securedDomains.length} total secured SNS domains/subdomains`);
+      return securedDomains;
+    },
+    enabled,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+

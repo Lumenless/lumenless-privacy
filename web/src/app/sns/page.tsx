@@ -26,6 +26,7 @@ import {
   useWrappedDomains, 
   useDomainsForOwner,
   useSubdomainsForOwner,
+  useSecuredDomains,
   SNSService
 } from '@/lib/sns-service';
 import { register } from '@bonfida/sub-register';
@@ -137,6 +138,13 @@ const writRoaRecordV2 = async (
 };
 import { WalletButton } from '@/components/WalletButton';
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
+import {
+  isDomainSecured,
+  buildDepositTransaction,
+  buildWithdrawTransaction,
+  buildDepositUnwrappedTransaction,
+  buildWithdrawUnwrappedTransaction,
+} from '@/lib/vault-service';
 
 export default function AppPage() {
   // Check if the SNS route is enabled
@@ -479,12 +487,14 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWrapSuccess }: { 
+function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mintAddress, isSecuredProp, onWrapSuccess }: { 
   domain: string; 
   pubkey: string | ReturnType<typeof address>; 
   isWrapped: boolean; 
   isSubdomain?: boolean;
   parentDomain?: string;
+  mintAddress?: string; // NFT mint address for wrapped domains
+  isSecuredProp?: boolean; // Whether this domain is already known to be secured
   onWrapSuccess?: () => void;
 }) {
   // Create RPC endpoint
@@ -494,6 +504,18 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWr
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [isWrapping, setIsWrapping] = useState(false);
+  const [isSecuring, setIsSecuring] = useState(false);
+  const [isUnsecuring, setIsUnsecuring] = useState(false);
+  // Initialize with the prop value if provided (from vault fetch)
+  const [isSecured, setIsSecured] = useState<boolean | null>(isSecuredProp ?? null);
+  const [securityError, setSecurityError] = useState<string | null>(null);
+  
+  // Update isSecured when prop changes (e.g., after vault data loads)
+  useEffect(() => {
+    if (isSecuredProp !== undefined) {
+      setIsSecured(isSecuredProp);
+    }
+  }, [isSecuredProp]);
   const { account } = useAccount();
   const { signer } = useTransactionSigner();
   const queryClient = useQueryClient();
@@ -534,6 +556,172 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWr
     solRecordQuery.refetch();
   }, [solRecordQuery]);
 
+  // Check if this domain is secured in the vault
+  useEffect(() => {
+    // If we already have the secured status from props, don't override it
+    if (isSecuredProp !== undefined) {
+      return;
+    }
+    
+    // Not a wrapped domain or no mint address - can't be secured yet
+    if (!isWrapped || !mintAddress) {
+      setIsSecured(false); // Not secured (needs to be wrapped first)
+      return;
+    }
+    
+    // No wallet connected - can't check, but default to false (not secured)
+    if (!account?.address) {
+      setIsSecured(false);
+      return;
+    }
+    
+    const checkSecured = async () => {
+      try {
+        const connection = new Connection(endpoint, 'confirmed');
+        const ownerPubkey = new PublicKey(account.address);
+        const mintPubkey = new PublicKey(mintAddress);
+        const secured = await isDomainSecured(connection, ownerPubkey, mintPubkey);
+        setIsSecured(secured);
+      } catch (err) {
+        console.error('Error checking domain security status:', err);
+        // If check fails (e.g., program not deployed), default to not secured
+        setIsSecured(false);
+      }
+    };
+    
+    checkSecured();
+  }, [isWrapped, mintAddress, account?.address, endpoint, isSecuredProp]);
+
+  // Create a signTransaction function
+  const signTransaction = useMemo(() => {
+    if (!signer) return null;
+    return async (params: { transaction: Uint8Array }) => {
+      const tx = Transaction.from(params.transaction);
+      const signed = await signer.signTransaction(tx);
+      if (signed instanceof Transaction || signed instanceof VersionedTransaction) {
+        return Buffer.from(signed.serialize()).toString('base64');
+      }
+      if (signed instanceof Uint8Array) {
+        return Buffer.from(signed).toString('base64');
+      }
+      throw new Error('Unexpected transaction type from signer');
+    };
+  }, [signer]);
+
+  // Handle securing a domain (deposit to vault)
+  const handleSecureDomain = useCallback(async () => {
+    if (!account?.address || !signTransaction) {
+      setSecurityError('Wallet not connected');
+      return;
+    }
+    
+    try {
+      setIsSecuring(true);
+      setSecurityError(null);
+      
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(account.address);
+      
+      let transaction: Transaction;
+      
+      if (isWrapped && mintAddress) {
+        // For wrapped (NFT) domains, use the NFT deposit
+        const mintPubkey = new PublicKey(mintAddress);
+        transaction = await buildDepositTransaction(connection, ownerPubkey, mintPubkey);
+      } else {
+        // For unwrapped domains, use the name account deposit
+        const nameAccountPubkey = new PublicKey(pubkey);
+        transaction = await buildDepositUnwrappedTransaction(connection, ownerPubkey, nameAccountPubkey);
+      }
+      
+      transaction.feePayer = ownerPubkey;
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      
+      // Sign and send
+      const signedTx = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      const sig = await connection.sendRawTransaction(Buffer.from(signedTx, 'base64'), {
+        skipPreflight: false,
+      });
+      
+      await connection.confirmTransaction(sig, 'confirmed');
+      
+      console.log('Domain secured successfully:', sig);
+      setIsSecured(true);
+      
+      // Refresh queries
+      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+    } catch (err) {
+      console.error('Error securing domain:', err);
+      setSecurityError(err instanceof Error ? err.message : 'Failed to secure domain');
+    } finally {
+      setIsSecuring(false);
+    }
+  }, [account?.address, mintAddress, isWrapped, pubkey, signTransaction, endpoint, queryClient]);
+
+  // Handle unsecuring a domain (withdraw from vault)
+  const handleUnsecureDomain = useCallback(async () => {
+    if (!account?.address || !signTransaction) {
+      setSecurityError('Wallet not connected');
+      return;
+    }
+    
+    try {
+      setIsUnsecuring(true);
+      setSecurityError(null);
+      
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(account.address);
+      
+      let transaction: Transaction;
+      
+      if (isWrapped && mintAddress) {
+        // For wrapped (NFT) domains, use the NFT withdraw
+        const mintPubkey = new PublicKey(mintAddress);
+        transaction = await buildWithdrawTransaction(ownerPubkey, mintPubkey);
+      } else {
+        // For unwrapped domains, use the name account withdraw
+        const nameAccountPubkey = new PublicKey(pubkey);
+        transaction = buildWithdrawUnwrappedTransaction(ownerPubkey, nameAccountPubkey);
+      }
+      
+      transaction.feePayer = ownerPubkey;
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      
+      // Sign and send
+      const signedTx = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      const sig = await connection.sendRawTransaction(Buffer.from(signedTx, 'base64'), {
+        skipPreflight: false,
+      });
+      
+      await connection.confirmTransaction(sig, 'confirmed');
+      
+      console.log('Domain unsecured successfully:', sig);
+      setIsSecured(false);
+      
+      // Refresh queries
+      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
+      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+    } catch (err) {
+      console.error('Error unsecuring domain:', err);
+      setSecurityError(err instanceof Error ? err.message : 'Failed to unsecure domain');
+    } finally {
+      setIsUnsecuring(false);
+    }
+  }, [account?.address, mintAddress, isWrapped, pubkey, signTransaction, endpoint, queryClient]);
+
   const handleWrap = useCallback(async () => {
     // TODO: Implement domain wrapping functionality
     // Wrapping a domain to NFT requires:
@@ -558,9 +746,16 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWr
                   Subdomain
                 </span>
               ) : isWrapped ? (
-                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium" title="This domain is wrapped into an NFT">
-                  NFT
-                </span>
+                <>
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium" title="This domain is wrapped into an NFT">
+                    NFT
+                  </span>
+                  {isSecured === true && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium" title="This domain is secured in your vault">
+                      🔒 Secured
+                    </span>
+                  )}
+                </>
               ) : (
                 <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-medium" title="This domain is not wrapped">
                   Unwrapped
@@ -570,9 +765,36 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, onWr
             <span className="text-xs text-muted-foreground font-mono mt-1">
               Domain: {typeof pubkey === 'string' ? pubkey : pubkey}
             </span>
+            {securityError && (
+              <span className="text-xs text-red-600 mt-1">
+                {securityError}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            {!isWrapped && (
+            {/* Secure/Unsecure buttons for all domains */}
+            {isSecured === true ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleUnsecureDomain}
+                disabled={isUnsecuring}
+                className="text-xs h-7 px-2 border-orange-500 text-orange-600 hover:bg-orange-50"
+              >
+                {isUnsecuring ? 'Unsecuring...' : '🔓 Unsecure'}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={handleSecureDomain}
+                disabled={isSecuring}
+                className="text-xs h-7 px-2 bg-green-600 hover:bg-green-700"
+              >
+                {isSecuring ? 'Securing...' : '🔒 Secure'}
+              </Button>
+            )}
+            {!isWrapped && !isSubdomain && (
               <Button
                 size="sm"
                 variant="default"
@@ -999,6 +1221,13 @@ function DomainsView() {
     { enabled: ownerAddress !== null }
   );
 
+  // Fetch secured domains from the user's vault
+  const securedDomains = useSecuredDomains(
+    endpoint,
+    ownerAddress,
+    { enabled: ownerAddress !== null }
+  );
+
   // Debug logging for subdomains
   useEffect(() => {
     console.log('[DomainsView] Subdomains query state:', {
@@ -1036,51 +1265,109 @@ function DomainsView() {
     }
   }, [connected, ownerAddress, subdomains.isLoading, subdomains.error, subdomains.data]);
 
-  // Combine unwrapped, wrapped, and subdomains with their status
+  // Create a set of secured domain mints/pubkeys for quick lookup
+  const securedMints = useMemo(() => {
+    const mints = new Set<string>();
+    if (securedDomains.data) {
+      securedDomains.data.forEach(d => {
+        if (d.mintAddress) mints.add(d.mintAddress);
+        mints.add(d.pubkey); // Also add pubkey for unwrapped domains
+      });
+    }
+    return mints;
+  }, [securedDomains.data]);
+
+  // Combine unwrapped, wrapped, secured, and subdomains with their status
   const allDomains = useMemo(() => {
     const domainsList: Array<{ 
       domain: string; 
       pubkey: string | ReturnType<typeof address>; 
       isWrapped: boolean;
       isSubdomain: boolean;
+      isSecured: boolean;
       parentDomain?: string;
     }> = [];
     
-    // Add unwrapped domains (isWrapped: false, isSubdomain: false)
+    // Track which domains we've already added (to avoid duplicates)
+    const seenDomains = new Set<string>();
+    
+    // Add secured domains first (isSecured: true)
+    // These are domains in the vault PDA (can be wrapped or unwrapped, domains or subdomains)
+    if (securedDomains.data) {
+      securedDomains.data.forEach(d => {
+        const key = `${d.domain}-${d.isSubdomain ? 'subdomain' : 'domain'}-secured`;
+        if (!seenDomains.has(key)) {
+          seenDomains.add(key);
+          seenDomains.add(d.domain); // Also mark the domain name as seen
+          domainsList.push({
+            domain: d.domain,
+            pubkey: d.pubkey,
+            isWrapped: d.isWrapped,
+            isSubdomain: d.isSubdomain || false,
+            isSecured: true,
+            parentDomain: d.parentDomain,
+          });
+        }
+      });
+    }
+    
+    // Add unwrapped domains (isWrapped: false, isSubdomain: false, isSecured: false)
     if (unwrappedDomains.data) {
-      domainsList.push(...unwrappedDomains.data.map(d => ({ 
-        ...d, 
-        isWrapped: false,
-        isSubdomain: false,
-      })));
+      unwrappedDomains.data.forEach(d => {
+        if (!seenDomains.has(d.domain)) {
+          seenDomains.add(d.domain);
+          domainsList.push({ 
+            ...d, 
+            isWrapped: false,
+            isSubdomain: false,
+            isSecured: false,
+          });
+        }
+      });
     }
     
     // Add wrapped domains (isWrapped: true, isSubdomain: false)
+    // Check if they're secured by looking up the mint in securedMints
     if (wrappedDomains.data) {
-      domainsList.push(...wrappedDomains.data.map(d => ({ 
-        ...d, 
-        isWrapped: true,
-        isSubdomain: false,
-      })));
+      wrappedDomains.data.forEach(d => {
+        if (!seenDomains.has(d.domain)) {
+          seenDomains.add(d.domain);
+          const pubkeyStr = typeof d.pubkey === 'string' ? d.pubkey : String(d.pubkey);
+          const isSecured = securedMints.has(pubkeyStr);
+          domainsList.push({ 
+            ...d, 
+            isWrapped: true,
+            isSubdomain: false,
+            isSecured,
+          });
+        }
+      });
     }
     
-    // Add subdomains (isWrapped: false, isSubdomain: true)
+    // Add subdomains (isWrapped: false, isSubdomain: true, isSecured: false)
     if (subdomains.data) {
-      domainsList.push(...subdomains.data.map(d => ({ 
-        domain: d.domain,
-        pubkey: d.pubkey,
-        isWrapped: false,
-        isSubdomain: true,
-        parentDomain: d.parentDomain,
-      })));
+      subdomains.data.forEach(d => {
+        const fullDomain = `${d.domain}.${d.parentDomain}`;
+        if (!seenDomains.has(fullDomain)) {
+          seenDomains.add(fullDomain);
+          domainsList.push({ 
+            domain: d.domain,
+            pubkey: d.pubkey,
+            isWrapped: false,
+            isSubdomain: true,
+            isSecured: false,
+            parentDomain: d.parentDomain,
+          });
+        }
+      });
     }
     
     return domainsList;
-  }, [unwrappedDomains.data, wrappedDomains.data, subdomains.data]);
+  }, [unwrappedDomains.data, wrappedDomains.data, subdomains.data, securedDomains.data, securedMints]);
 
   // Combined loading state
-  const isLoading = unwrappedDomains.isLoading || wrappedDomains.isLoading || subdomains.isLoading;
-  const error = unwrappedDomains.error || wrappedDomains.error || subdomains.error;
+  const isLoading = unwrappedDomains.isLoading || wrappedDomains.isLoading || subdomains.isLoading || securedDomains.isLoading;
+  const error = unwrappedDomains.error || wrappedDomains.error || subdomains.error || securedDomains.error;
 
   // Debug logging - log domains list to console
   useEffect(() => {
@@ -1093,6 +1380,7 @@ function DomainsView() {
       console.log('Unwrapped Domains:', unwrappedDomains.data?.length || 0);
       console.log('Wrapped Domains:', wrappedDomains.data?.length || 0);
       console.log('Subdomains:', subdomains.data?.length || 0);
+      console.log('Secured Domains (in vault):', securedDomains.data?.length || 0);
       
       if (allDomains.length > 0) {
         console.log('Total Domains Found:', allDomains.length);
@@ -1108,7 +1396,7 @@ function DomainsView() {
       }
       console.log('========================');
     }
-  }, [connected, ownerAddress, isLoading, error, allDomains, unwrappedDomains.data, wrappedDomains.data, subdomains.data]);
+  }, [connected, ownerAddress, isLoading, error, allDomains, unwrappedDomains.data, wrappedDomains.data, subdomains.data, securedDomains.data]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -1214,6 +1502,8 @@ function DomainsView() {
                     isWrapped={domainItem.isWrapped}
                     isSubdomain={domainItem.isSubdomain}
                     parentDomain={domainItem.parentDomain}
+                    mintAddress={domainItem.isWrapped ? pubkeyStr : undefined}
+                    isSecuredProp={domainItem.isSecured}
                   />
                 );
               })}
