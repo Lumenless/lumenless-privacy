@@ -1037,36 +1037,49 @@ export function useSecuredDomains(
               console.log(`[useSecuredDomains] Parent domain resolved: ${parentDomainName}.sol`);
               
               // Find all subdomains of this parent to get the name
-              try {
-                const subdomainsOfParent = await findSubdomainsForParent(connection, parentPubkey);
-                console.log(`[useSecuredDomains] Found ${subdomainsOfParent.length} subdomains for parent ${parentDomainName}`);
-                
-                // Look for our subdomain account in the list
-                // findSubdomains returns string[] of subdomain names
-                for (const subName of subdomainsOfParent) {
-                  // Derive the subdomain key from the name
-                  const { pubkey: derivedKey } = getDomainKeySync(`${subName}.${parentDomainName}`);
-                  if (derivedKey.toBase58() === nameAccount) {
-                    domainName = subName;
-                    console.log(`[useSecuredDomains] ✓ Matched subdomain name: ${domainName}`);
-                    break;
-                  }
+              // Use a fresh connection to avoid caching issues
+              const freshConnection = new Connection(endpoint, { commitment: 'confirmed', disableRetryOnRateLimit: false });
+              console.log(`[useSecuredDomains] Calling findSubdomains for parent: ${parentDomainName} (${parentPubkey.toBase58()})`);
+              const subdomainsOfParent = await findSubdomainsForParent(freshConnection, parentPubkey);
+              console.log(`[useSecuredDomains] findSubdomains returned ${subdomainsOfParent.length} subdomains:`, subdomainsOfParent);
+              console.log(`[useSecuredDomains] Looking for nameAccount: ${nameAccount}`);
+              
+              // Look for our subdomain account in the list
+              // findSubdomains returns string[] of subdomain names
+              let foundMatch = false;
+              for (const subName of subdomainsOfParent) {
+                // Derive the subdomain key from the name
+                const { pubkey: derivedKey } = getDomainKeySync(`${subName}.${parentDomainName}`);
+                console.log(`[useSecuredDomains] Checking ${subName}: derived=${derivedKey.toBase58()}, target=${nameAccount}`);
+                if (derivedKey.toBase58() === nameAccount) {
+                  domainName = subName;
+                  foundMatch = true;
+                  console.log(`[useSecuredDomains] ✓ Matched subdomain name: ${domainName}`);
+                  break;
                 }
-                
-                if (domainName === 'unknown') {
-                  // Subdomain not in parent's list - might be a nested subdomain or deleted
-                  domainName = `secured-sub`;
+              }
+              
+              if (!foundMatch) {
+                // Subdomain not found via findSubdomains - try localStorage cache
+                const cachedName = typeof window !== 'undefined' 
+                  ? localStorage.getItem(`secured-domain-${nameAccount}`) 
+                  : null;
+                  
+                if (cachedName) {
+                  domainName = cachedName;
+                  console.log(`[useSecuredDomains] Found cached subdomain name: ${domainName}`);
+                } else {
+                  console.warn(`[useSecuredDomains] Could not resolve subdomain name for ${nameAccount}`);
+                  // Try one more approach - check if we can derive from known subdomains
+                  domainName = `sub-${nameAccount.slice(0, 6)}`;
                 }
-              } catch (findErr) {
-                console.error(`[useSecuredDomains] Error finding subdomains:`, findErr);
-                domainName = `secured-sub`;
               }
               
               console.log(`[useSecuredDomains] ✓ Found secured subdomain: ${domainName}.${parentDomainName}.sol (nameAccount: ${nameAccount})`);
             } catch (subErr) {
-              console.error(`[useSecuredDomains] Error resolving subdomain parent ${nameAccount}:`, subErr);
-              domainName = `secured-subdomain`;
-              console.log(`[useSecuredDomains] ✓ Found secured subdomain (unknown parent): ${nameAccount}`);
+              console.error(`[useSecuredDomains] Error resolving subdomain ${nameAccount}:`, subErr);
+              // Still add domain with partial info rather than skipping
+              domainName = `secured-sub`;
             }
           } else {
             // Regular domain - reverse lookup should work
@@ -1075,7 +1088,8 @@ export function useSecuredDomains(
               console.log(`[useSecuredDomains] ✓ Found secured domain: ${domainName}.sol (nameAccount: ${nameAccount})`);
             } catch (err) {
               console.error(`[useSecuredDomains] Error with reverse lookup for domain ${nameAccount}:`, err);
-              domainName = `secured-${nameAccount.slice(0, 8)}`;
+              // Skip domains we can't resolve rather than showing wrong name
+              continue;
             }
           }
           
@@ -1088,13 +1102,8 @@ export function useSecuredDomains(
           });
         } catch (err) {
           console.error(`[useSecuredDomains] Error processing name account ${nameAccount}:`, err);
-          // Still add it so user can see something is secured
-          securedDomains.push({
-            domain: `secured-${nameAccount.slice(0, 8)}`,
-            pubkey: nameAccount,
-            isWrapped: false,
-            isSubdomain: false,
-          });
+          // Skip domains we can't process rather than showing wrong name
+          continue;
         }
       }
       

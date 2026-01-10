@@ -651,12 +651,21 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
       await connection.confirmTransaction(sig, 'confirmed');
       
       console.log('Domain secured successfully:', sig);
-      setIsSecured(true);
       
-      // Refresh queries
-      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
-      queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
-      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      // Cache the domain name for later resolution
+      // This helps when the secured domains query can't resolve the name
+      const pubkeyStr = typeof pubkey === 'string' ? pubkey : String(pubkey);
+      localStorage.setItem(`secured-domain-${pubkeyStr}`, domain);
+      console.log(`[Secure] Cached domain name: ${domain} for ${pubkeyStr}`);
+      
+      // Wait a moment for the blockchain state to propagate before refetching
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Refresh all domain queries - don't manually set state, let the refetch update it
+      await queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+      await queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
+      await queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      await queryClient.invalidateQueries({ queryKey: ['subdomains-for-owner'] });
     } catch (err) {
       console.error('Error securing domain:', err);
       setSecurityError(err instanceof Error ? err.message : 'Failed to secure domain');
@@ -708,12 +717,20 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
       await connection.confirmTransaction(sig, 'confirmed');
       
       console.log('Domain unsecured successfully:', sig);
-      setIsSecured(false);
       
-      // Refresh queries
-      queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
-      queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
-      queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      // Clear the cached domain name
+      const pubkeyStr = typeof pubkey === 'string' ? pubkey : String(pubkey);
+      localStorage.removeItem(`secured-domain-${pubkeyStr}`);
+      console.log(`[Unsecure] Cleared cached domain name for ${pubkeyStr}`);
+      
+      // Wait a moment for the blockchain state to propagate before refetching
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Refresh all domain queries - don't manually set state, let the refetch update it
+      await queryClient.invalidateQueries({ queryKey: ['wrapped-domains'] });
+      await queryClient.invalidateQueries({ queryKey: ['secured-domains'] });
+      await queryClient.invalidateQueries({ queryKey: ['domains-for-owner'] });
+      await queryClient.invalidateQueries({ queryKey: ['subdomains-for-owner'] });
     } catch (err) {
       console.error('Error unsecuring domain:', err);
       setSecurityError(err instanceof Error ? err.message : 'Failed to unsecure domain');
@@ -1381,6 +1398,15 @@ function DomainsView() {
       console.log('Wrapped Domains:', wrappedDomains.data?.length || 0);
       console.log('Subdomains:', subdomains.data?.length || 0);
       console.log('Secured Domains (in vault):', securedDomains.data?.length || 0);
+      
+      // Log secured domains details
+      if (securedDomains.data && securedDomains.data.length > 0) {
+        console.log('Secured Domains Details:');
+        securedDomains.data.forEach((d, i) => {
+          console.log(`  ${i + 1}. ${d.domain}${d.parentDomain ? `.${d.parentDomain}` : ''}.sol`);
+          console.log(`     pubkey: ${d.pubkey}, isWrapped: ${d.isWrapped}, isSubdomain: ${d.isSubdomain}`);
+        });
+      }
       
       if (allDomains.length > 0) {
         console.log('Total Domains Found:', allDomains.length);
