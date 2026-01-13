@@ -1444,25 +1444,6 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
         </div>
       </div>
 
-      {/* SOL Balance */}
-      <div className="rounded-lg border border-border bg-gradient-to-r from-purple-50 to-blue-50 p-4 mb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
-              <Image src="/sol.svg" alt="SOL" width={24} height={24} />
-            </div>
-            <div>
-              <p className="font-semibold text-lg">SOL</p>
-              <p className="text-xs text-muted-foreground">Solana</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="font-semibold text-lg">{formatNumber(data.solBalance)} SOL</p>
-            <p className="text-xs text-muted-foreground">Native balance</p>
-          </div>
-        </div>
-      </div>
-
       {/* Status Messages */}
       {ataError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
@@ -1479,40 +1460,37 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
       {/* Token Balances - check ataCount to determine if vault is initialized */}
       {data.ataCount > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground mb-2">
-            Token Accounts ({data.ataCount})
-          </p>
-          {data.tokens.length > 0 ? (
-            data.tokens.map((token) => (
-              <div
-                key={token.mint}
-                className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <TokenIcon logoUri={token.logoUri} symbol={token.symbol} size={32} />
-                    <div>
-                      <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{truncateAddress(token.mint)}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium">{token.uiAmount > 0 ? formatNumber(token.uiAmount) : '0'}</p>
-                    <a
-                      href={`https://solscan.io/token/${token.mint}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary hover:underline"
-                    >
-                      View →
-                    </a>
-                  </div>
+          {/* SOL Native Balance */}
+          {data.solBalance > 0 && (
+            <div className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <TokenIcon logoUri="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" symbol="SOL" size={32} />
+                  <p className="font-medium">SOL</p>
                 </div>
+                <p className="font-medium">{formatNumber(data.solBalance)}</p>
               </div>
-            ))
-          ) : (
+            </div>
+          )}
+          {/* SPL Token Balances */}
+          {data.tokens.filter(t => t.uiAmount > 0).map((token) => (
+            <div
+              key={token.mint}
+              className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <TokenIcon logoUri={token.logoUri} symbol={token.symbol} size={32} />
+                  <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
+                </div>
+                <p className="font-medium">{formatNumber(token.uiAmount)}</p>
+              </div>
+            </div>
+          ))}
+          {/* Empty state when no balances */}
+          {data.solBalance === 0 && data.tokens.filter(t => t.uiAmount > 0).length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">
-              All token balances are zero
+              No token balances
             </p>
           )}
         </div>
@@ -1550,9 +1528,26 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               <span className="font-medium">Supported tokens:</span>{' '}
+              <a 
+                href={`https://solscan.io/account/${data.vaultAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground hover:text-primary hover:underline"
+              >
+                SOL
+              </a>
+              {data.tokens.length > 0 && ', '}
               {data.tokens.map((token, i) => (
-                <span key={token.mint} className="text-foreground">
-                  {token.symbol || 'Unknown'}{i < data.tokens.length - 1 ? ', ' : ''}
+                <span key={token.mint}>
+                  <a
+                    href={`https://solscan.io/token/${token.mint}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-foreground hover:text-primary hover:underline"
+                  >
+                    {token.symbol || 'Unknown'}
+                  </a>
+                  {i < data.tokens.length - 1 ? ', ' : ''}
                 </span>
               ))}
             </p>
