@@ -1313,16 +1313,22 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
       }
       
       // Import vault service functions
-      const { getVaultPDA, createInitVaultTokenAccountInstruction, vaultExists, createInitializeVaultInstruction } = await import('@/lib/vault-service');
-      const { getAssociatedTokenAddress } = await import('@solana/spl-token');
+      const { getVaultPDA, createInitVaultTokenAccountInstruction, vaultExists, createInitializeVaultInstruction, getTokenProgramForMint } = await import('@/lib/vault-service');
+      const { getAssociatedTokenAddressSync, ASSOCIATED_TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
       
       const [vaultPDA] = getVaultPDA(ownerPubkey);
       
-      // Get the ATA address for the vault
-      const vaultAta = await getAssociatedTokenAddress(
+      // Detect which token program this mint belongs to (Token vs Token-2022)
+      const tokenProgramId = await getTokenProgramForMint(connection, mintPubkey);
+      console.log(`Token ${mintPubkey.toBase58()} uses ${tokenProgramId.toBase58() === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' ? 'Token-2022' : 'Token'} program`);
+      
+      // Get the ATA address for the vault using the correct token program
+      const vaultAta = getAssociatedTokenAddressSync(
         mintPubkey,
         vaultPDA,
-        true // allowOwnerOffCurve - REQUIRED for PDAs!
+        true, // allowOwnerOffCurve - REQUIRED for PDAs!
+        tokenProgramId,
+        ASSOCIATED_TOKEN_PROGRAM_ID
       );
       
       // Check if ATA already exists
@@ -1342,8 +1348,8 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
         transaction.add(createInitializeVaultInstruction(ownerPubkey));
       }
       
-      // Create ATA through smart contract
-      const initAtaIx = await createInitVaultTokenAccountInstruction(ownerPubkey, mintPubkey);
+      // Create ATA through smart contract with correct token program
+      const initAtaIx = createInitVaultTokenAccountInstruction(ownerPubkey, mintPubkey, tokenProgramId);
       transaction.add(initAtaIx);
       
       transaction.feePayer = ownerPubkey;
@@ -1473,19 +1479,9 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
       {/* Token Balances - check ataCount to determine if vault is initialized */}
       {data.ataCount > 0 ? (
         <div className="space-y-2">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Token Accounts ({data.ataCount})
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setShowAddTokenModal(true)}
-              className="text-xs h-7"
-            >
-              + Enable New Token
-            </Button>
-          </div>
+          <p className="text-sm font-medium text-muted-foreground mb-2">
+            Token Accounts ({data.ataCount})
+          </p>
           {data.tokens.length > 0 ? (
             data.tokens.map((token) => (
               <div
@@ -1551,19 +1547,23 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
       {/* Supported Tokens Section (shown when vault has ATAs) */}
       {data.ataCount > 0 && (
         <div className="mt-4 pt-4 border-t border-border">
-          <p className="text-xs font-medium text-muted-foreground mb-2">Supported Tokens:</p>
-          <div className="grid grid-cols-1 gap-1">
-            {DEFAULT_VAULT_TOKENS.map((token) => {
-              const hasAta = data.tokens.some(t => t.mint === token.mint);
-              return (
-                <p key={token.mint} className="text-xs font-mono">
-                  <span className={`font-semibold ${hasAta ? 'text-green-600' : 'text-muted-foreground'}`}>
-                    {hasAta ? '✓ ' : ''}{token.symbol}
-                  </span>{' '}
-                  <span className="text-muted-foreground">({truncateAddress(token.mint)})</span>
-                </p>
-              );
-            })}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">Supported tokens:</span>{' '}
+              {data.tokens.map((token, i) => (
+                <span key={token.mint} className="text-foreground">
+                  {token.symbol || 'Unknown'}{i < data.tokens.length - 1 ? ', ' : ''}
+                </span>
+              ))}
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowAddTokenModal(true)}
+              className="text-xs h-6 px-2 text-muted-foreground hover:text-foreground"
+            >
+              + Add
+            </Button>
           </div>
         </div>
       )}

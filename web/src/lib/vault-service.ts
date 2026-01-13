@@ -1,8 +1,10 @@
 import { PublicKey, Transaction, TransactionInstruction, Connection, SystemProgram } from '@solana/web3.js';
 import { 
   TOKEN_PROGRAM_ID, 
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
 
 // Program ID from our deployed contract
@@ -13,6 +15,25 @@ export const NAME_SERVICE_PROGRAM_ID = new PublicKey('namesLPneVptA9Z5rqUDD9tMTW
 
 // Seed for vault PDA
 const VAULT_SEED = Buffer.from('vault');
+
+/**
+ * Get the token program ID for a given mint
+ * Returns TOKEN_2022_PROGRAM_ID if the mint is owned by Token-2022, otherwise TOKEN_PROGRAM_ID
+ */
+export async function getTokenProgramForMint(
+  connection: Connection,
+  mint: PublicKey
+): Promise<PublicKey> {
+  const mintInfo = await connection.getAccountInfo(mint);
+  if (!mintInfo) {
+    throw new Error(`Mint account not found: ${mint.toBase58()}`);
+  }
+  
+  if (mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+    return TOKEN_2022_PROGRAM_ID;
+  }
+  return TOKEN_PROGRAM_ID;
+}
 
 // Instruction discriminators from the IDL
 const INITIALIZE_VAULT_DISCRIMINATOR = Buffer.from([48, 191, 163, 44, 71, 129, 63, 164]);
@@ -320,18 +341,24 @@ export function buildWithdrawUnwrappedTransaction(
 /**
  * Create init vault token account instruction
  * Creates an ATA for a specific token mint owned by the vault PDA
+ * @param owner - The vault owner
+ * @param tokenMint - The token mint address
+ * @param tokenProgramId - The token program (TOKEN_PROGRAM_ID or TOKEN_2022_PROGRAM_ID)
  */
-export async function createInitVaultTokenAccountInstruction(
+export function createInitVaultTokenAccountInstruction(
   owner: PublicKey,
-  tokenMint: PublicKey
-): Promise<TransactionInstruction> {
+  tokenMint: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID
+): TransactionInstruction {
   const [vaultPDA] = getVaultPDA(owner);
   
-  // Get the vault's ATA for this token mint
-  const vaultTokenAccount = await getAssociatedTokenAddress(
+  // Get the vault's ATA for this token mint (using the correct token program)
+  const vaultTokenAccount = getAssociatedTokenAddressSync(
     tokenMint,
     vaultPDA,
-    true // allowOwnerOffCurve - required for PDAs
+    true, // allowOwnerOffCurve - required for PDAs
+    tokenProgramId,
+    ASSOCIATED_TOKEN_PROGRAM_ID
   );
   
   const keys = [
@@ -339,7 +366,7 @@ export async function createInitVaultTokenAccountInstruction(
     { pubkey: vaultPDA, isSigner: false, isWritable: false },
     { pubkey: tokenMint, isSigner: false, isWritable: false },
     { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ];
@@ -354,6 +381,7 @@ export async function createInitVaultTokenAccountInstruction(
 /**
  * Build a transaction to initialize vault with multiple token accounts
  * Creates the vault (if needed) and ATAs for all specified token mints
+ * Automatically detects Token vs Token-2022 for each mint
  */
 export async function buildInitVaultWithTokensTransaction(
   connection: Connection,
@@ -371,17 +399,30 @@ export async function buildInitVaultWithTokensTransaction(
   
   // Add init token account instructions for each mint (skip existing ATAs)
   for (const tokenMint of tokenMints) {
-    const vaultTokenAccount = await getAssociatedTokenAddress(
+    // Detect which token program this mint belongs to
+    let tokenProgramId: PublicKey;
+    try {
+      tokenProgramId = await getTokenProgramForMint(connection, tokenMint);
+    } catch (e) {
+      console.warn(`Failed to detect token program for mint ${tokenMint.toBase58()}, skipping:`, e);
+      continue;
+    }
+    
+    // Get ATA address using the correct token program
+    const vaultTokenAccount = getAssociatedTokenAddressSync(
       tokenMint,
       vaultPDA,
-      true // allowOwnerOffCurve - required for PDAs
+      true, // allowOwnerOffCurve - required for PDAs
+      tokenProgramId,
+      ASSOCIATED_TOKEN_PROGRAM_ID
     );
     
     // Check if ATA already exists
     const ataInfo = await connection.getAccountInfo(vaultTokenAccount);
     if (!ataInfo) {
-      const initAtaIx = await createInitVaultTokenAccountInstruction(owner, tokenMint);
+      const initAtaIx = createInitVaultTokenAccountInstruction(owner, tokenMint, tokenProgramId);
       transaction.add(initAtaIx);
+      console.log(`Adding ATA for ${tokenMint.toBase58()} using ${tokenProgramId.equals(TOKEN_2022_PROGRAM_ID) ? 'Token-2022' : 'Token'} program`);
     }
   }
   

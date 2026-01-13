@@ -11,6 +11,14 @@ type SolanaRpc = ReturnType<typeof createSolanaRpc>;
 export const TOKEN_METADATA_PROGRAM_ID = address('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
 /**
+ * Token-2022 Program ID
+ */
+export const TOKEN_2022_PROGRAM_ID = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+
+// Token-2022 Extension Types
+const EXTENSION_TYPE_TOKEN_METADATA = 19;
+
+/**
  * Token metadata information
  */
 export interface TokenMetadata {
@@ -327,4 +335,224 @@ export class MetaplexService {
   async getMetadataPda(mint: string): Promise<Address> {
     return findMetadataPda(address(mint));
   }
+}
+
+// ============================================================================
+// Token-2022 Metadata Extension Support
+// ============================================================================
+
+/**
+ * Parse a length-prefixed string from Token-2022 metadata extension
+ * Format: 4 bytes (little-endian u32 length) + string bytes
+ */
+function readLengthPrefixedString(data: Buffer, offset: number): { value: string; newOffset: number } {
+  if (offset + 4 > data.length) {
+    return { value: '', newOffset: offset };
+  }
+  
+  const length = data.readUInt32LE(offset);
+  const stringStart = offset + 4;
+  const stringEnd = stringStart + length;
+  
+  if (stringEnd > data.length) {
+    return { value: '', newOffset: offset };
+  }
+  
+  const value = data.slice(stringStart, stringEnd).toString('utf8');
+  return { value: cleanStr(value), newOffset: stringEnd };
+}
+
+/**
+ * Parse Token-2022 metadata extension from mint account data
+ * Returns the metadata if found, null otherwise
+ */
+function parseToken2022MetadataExtension(mintData: Buffer, mintAddress?: string): { symbol?: string; name?: string; uri?: string } | null {
+  // Token-2022 mint account base size is 82 bytes
+  // Extensions start after the base mint data
+  // Format: accountType (1) + mint data (82 minimum)
+  
+  const MINT_SIZE = 82;
+  const log = (msg: string) => console.log(`[Token2022Parse] ${mintAddress?.slice(0, 8) || 'unknown'}... ${msg}`);
+  
+  log(`Data length: ${mintData.length} bytes`);
+  
+  if (mintData.length <= MINT_SIZE) {
+    log('No extensions (data too short)');
+    return null;
+  }
+  
+  // Token-2022 uses TLV encoding for extensions
+  // Each extension: type (2 bytes, u16) + length (2 bytes, u16) + data
+  // BUT there's also an account type byte and extension pointer area
+  
+  // The extension area starts at offset 165 (82 mint + 83 padding/header area)
+  // Let's try scanning from different offsets
+  const possibleOffsets = [82, 165, 166];
+  
+  for (const startOffset of possibleOffsets) {
+    let offset = startOffset;
+    log(`Trying scan from offset ${startOffset}`);
+    
+    let extensionCount = 0;
+    while (offset + 4 <= mintData.length && extensionCount < 20) {
+      const extensionType = mintData.readUInt16LE(offset);
+      const extensionLength = mintData.readUInt16LE(offset + 2);
+      
+      log(`  Offset ${offset}: type=${extensionType}, length=${extensionLength}`);
+      
+      if (extensionType === 0 && extensionLength === 0) {
+        break;
+      }
+      
+      // Sanity check
+      if (extensionLength > mintData.length - offset - 4) {
+        log(`  Invalid extension length, breaking`);
+        break;
+      }
+      
+      if (extensionType === EXTENSION_TYPE_TOKEN_METADATA) {
+        log(`  Found TokenMetadata extension at offset ${offset}!`);
+        const extDataStart = offset + 4;
+        const extData = mintData.slice(extDataStart, extDataStart + extensionLength);
+        
+        log(`  Extension data length: ${extData.length}`);
+        
+        if (extData.length < 64) {
+          log(`  Not enough data for metadata header`);
+          return null;
+        }
+        
+        // TokenMetadata layout:
+        // - update_authority: Pubkey (32 bytes)
+        // - mint: Pubkey (32 bytes)
+        // - name: String (length-prefixed)
+        // - symbol: String (length-prefixed)
+        // - uri: String (length-prefixed)
+        
+        let parseOffset = 64; // Skip update_authority + mint
+        
+        const nameResult = readLengthPrefixedString(extData, parseOffset);
+        log(`  name: "${nameResult.value}" (offset ${parseOffset} -> ${nameResult.newOffset})`);
+        parseOffset = nameResult.newOffset;
+        
+        const symbolResult = readLengthPrefixedString(extData, parseOffset);
+        log(`  symbol: "${symbolResult.value}" (offset ${parseOffset} -> ${symbolResult.newOffset})`);
+        parseOffset = symbolResult.newOffset;
+        
+        const uriResult = readLengthPrefixedString(extData, parseOffset);
+        log(`  uri: "${uriResult.value}" (offset ${parseOffset} -> ${uriResult.newOffset})`);
+        
+        return {
+          name: nameResult.value || undefined,
+          symbol: symbolResult.value || undefined,
+          uri: uriResult.value || undefined,
+        };
+      }
+      
+      // Move to next extension
+      offset += 4 + extensionLength;
+      extensionCount++;
+    }
+  }
+  
+  log('TokenMetadata extension not found');
+  return null;
+}
+
+/**
+ * Fetch Token-2022 metadata from mint accounts using the metadata extension
+ * This is different from Metaplex - the metadata is stored directly in the mint account
+ */
+export async function fetchToken2022MetadataBatch(
+  rpc: SolanaRpc,
+  mints: string[],
+  options?: { fetchImages?: boolean }
+): Promise<Map<string, TokenMetadata>> {
+  const results = new Map<string, TokenMetadata>();
+  const fetchImages = options?.fetchImages !== false;
+  
+  if (mints.length === 0) {
+    return results;
+  }
+  
+  console.log(`[Token2022Service] Fetching metadata for ${mints.length} Token-2022 mint(s):`, mints);
+  
+  try {
+    // Fetch all mint accounts
+    const mintAddresses = mints.map(m => address(m));
+    const accounts = await rpc.getMultipleAccounts(mintAddresses, { encoding: 'base64' }).send();
+    
+    console.log(`[Token2022Service] Got ${accounts?.value?.length || 0} accounts from RPC`);
+    
+    // Collect URIs for off-chain metadata fetch
+    const urisToFetch: Array<{ mint: string; uri: string }> = [];
+    
+    for (let i = 0; i < mints.length; i++) {
+      const mintStr = mints[i];
+      const acc = accounts?.value?.[i];
+      
+      console.log(`[Token2022Service] Processing ${mintStr}...`);
+      
+      if (!acc) {
+        console.log(`[Token2022Service] ${mintStr}: No account data returned`);
+        continue;
+      }
+      
+      console.log(`[Token2022Service] ${mintStr}: owner=${acc.owner}, dataLen=${Array.isArray(acc.data) ? acc.data[0]?.length : 'unknown'}`);
+      
+      // Verify this is a Token-2022 account
+      if (acc.owner !== TOKEN_2022_PROGRAM_ID) {
+        console.log(`[Token2022Service] ${mintStr}: Not a Token-2022 mint (owner: ${acc.owner}), skipping`);
+        continue;
+      }
+      
+      const buf = decodeAccountDataToBuffer(acc.data);
+      if (!buf) {
+        console.log(`[Token2022Service] ${mintStr}: Failed to decode account data`);
+        continue;
+      }
+      
+      console.log(`[Token2022Service] ${mintStr}: Decoded buffer length: ${buf.length}`);
+      
+      // Parse the metadata extension
+      const metadata = parseToken2022MetadataExtension(buf, mintStr);
+      
+      if (metadata) {
+        console.log(`[Token2022Service] ✓ Found: ${mintStr} -> ${metadata.symbol} (${metadata.name}), uri: ${metadata.uri?.slice(0, 50)}...`);
+        
+        results.set(mintStr, {
+          mint: mintStr,
+          symbol: metadata.symbol,
+          name: metadata.name,
+          uri: metadata.uri,
+        });
+        
+        // Collect URI for image fetch
+        if (fetchImages && metadata.uri) {
+          urisToFetch.push({ mint: mintStr, uri: metadata.uri });
+        }
+      } else {
+        console.log(`[Token2022Service] ✗ No metadata extension found for ${mintStr}`);
+      }
+    }
+    
+    // Fetch off-chain metadata to get images
+    if (fetchImages && urisToFetch.length > 0) {
+      console.log(`[Token2022Service] Fetching off-chain metadata for ${urisToFetch.length} URIs...`);
+      const imageMap = await fetchOffChainMetadataBatch(urisToFetch);
+      
+      // Update results with images
+      for (const [mintStr, imageUrl] of imageMap) {
+        const existing = results.get(mintStr);
+        if (existing) {
+          existing.image = imageUrl;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Token2022Service] Error in batch fetch:', err);
+  }
+  
+  console.log(`[Token2022Service] Successfully fetched ${results.size}/${mints.length} metadata`);
+  return results;
 }

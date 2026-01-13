@@ -12,7 +12,7 @@ import {
 } from '@solana-name-service/sns-sdk-kit';
 
 // Import Metaplex service for token metadata
-import { findMetadataPda, fetchTokenMetadataBatch, TOKEN_METADATA_PROGRAM_ID } from './metaplex-service';
+import { findMetadataPda, fetchTokenMetadataBatch, fetchToken2022MetadataBatch, TOKEN_METADATA_PROGRAM_ID } from './metaplex-service';
 
 // Type for RPC (return type of createSolanaRpc)
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
@@ -991,7 +991,7 @@ export function useVaultBalance(
       const tokens: TokenBalanceInfo[] = [];
       let ataCount = tokenAccounts.length; // Count all ATAs including zero balance
       
-      // Initialize token metadata map with our known tokens first (fallback)
+      // Initialize token metadata map with our known tokens
       const tokenList: Map<string, { symbol?: string; name?: string; logoURI?: string }> = new Map([
         ['So11111111111111111111111111111111111111112', { symbol: 'wSOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' }],
         ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', { symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' }],
@@ -1010,8 +1010,9 @@ export function useVaultBalance(
         }
       }
       
-      // Fetch Metaplex metadata for unknown tokens using MetaplexService
+      // Fetch Metaplex metadata for unknown tokens
       if (unknownMints.length > 0) {
+        console.log(`[useVaultBalance] Fetching Metaplex metadata for ${unknownMints.length} tokens...`);
         const metaplexMetadata = await fetchTokenMetadataBatch(rpc, unknownMints, { fetchImages: true });
         
         // Add fetched metadata to tokenList
@@ -1019,7 +1020,7 @@ export function useVaultBalance(
           tokenList.set(mintStr, {
             symbol: metadata.symbol,
             name: metadata.name,
-            logoURI: metadata.image, // Use the actual image URL from off-chain metadata
+            logoURI: metadata.image,
           });
         }
       }
@@ -1081,7 +1082,7 @@ export function useVaultBalance(
         console.log(`[useVaultBalance] Found ${token2022Accounts.length} Token-2022 accounts`);
         ataCount += token2022Accounts.length;
         
-        // Collect unknown Token-2022 mints for Metaplex lookup
+        // Collect unknown Token-2022 mints for metadata lookup
         const unknownToken2022Mints: string[] = [];
         for (const ta of token2022Accounts) {
           const info = ta?.account?.data?.parsed?.info;
@@ -1090,17 +1091,18 @@ export function useVaultBalance(
             unknownToken2022Mints.push(info.mint);
           }
         }
-        
-        // Fetch Metaplex metadata for unknown Token-2022 tokens using MetaplexService
+
+        // Fetch Token-2022 metadata from mint's metadata extension (not Metaplex)
         if (unknownToken2022Mints.length > 0) {
-          const metaplexMetadata = await fetchTokenMetadataBatch(rpc, unknownToken2022Mints, { fetchImages: true });
-          
+          console.log(`[useVaultBalance] Fetching Token-2022 metadata extension for ${unknownToken2022Mints.length} tokens...`);
+          const token2022Metadata = await fetchToken2022MetadataBatch(rpc, unknownToken2022Mints, { fetchImages: true });
+
           // Add fetched metadata to tokenList
-          for (const [mintStr, metadata] of metaplexMetadata) {
+          for (const [mintStr, metadata] of token2022Metadata) {
             tokenList.set(mintStr, {
               symbol: metadata.symbol,
               name: metadata.name,
-              logoURI: metadata.image, // Use the actual image URL from off-chain metadata
+              logoURI: metadata.image,
             });
           }
         }
