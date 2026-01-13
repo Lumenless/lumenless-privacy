@@ -993,7 +993,7 @@ export function useVaultBalance(
       
       // Initialize token metadata map with our known tokens
       const tokenList: Map<string, { symbol?: string; name?: string; logoURI?: string }> = new Map([
-        ['So11111111111111111111111111111111111111112', { symbol: 'wSOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' }],
+        ['So11111111111111111111111111111111111111112', { symbol: 'WSOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' }],
         ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', { symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' }],
         ['Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', { symbol: 'USDT', name: 'Tether USD', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' }],
         ['6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM', { symbol: 'LUMEN', name: 'LUMEN', logoURI: 'https://ipfs.io/ipfs/QmVbBhRm2aSf1HAQWYkdUWeuxRFw9hooR1vQYFBjSWBkuF' }],
