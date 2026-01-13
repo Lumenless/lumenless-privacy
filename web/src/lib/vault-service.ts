@@ -21,6 +21,9 @@ const WITHDRAW_DOMAIN_DISCRIMINATOR = Buffer.from([147, 201, 125, 224, 211, 146,
 // Discriminators for unwrapped domains
 const DEPOSIT_UNWRAPPED_DOMAIN_DISCRIMINATOR = Buffer.from([96, 225, 213, 173, 90, 111, 128, 32]);
 const WITHDRAW_UNWRAPPED_DOMAIN_DISCRIMINATOR = Buffer.from([170, 189, 73, 129, 207, 42, 120, 91]);
+// Discriminator for init_vault_token_account (sha256("global:init_vault_token_account")[0..8])
+// Hex: a57a8af03703c554 -> [165, 122, 138, 240, 55, 3, 197, 84]
+const INIT_VAULT_TOKEN_ACCOUNT_DISCRIMINATOR = Buffer.from([165, 122, 138, 240, 55, 3, 197, 84]);
 
 /**
  * Get the vault PDA for a user
@@ -310,6 +313,77 @@ export function buildWithdrawUnwrappedTransaction(
   // Add withdraw instruction
   const withdrawIx = createWithdrawUnwrappedDomainInstruction(owner, nameAccount);
   transaction.add(withdrawIx);
+  
+  return transaction;
+}
+
+/**
+ * Create init vault token account instruction
+ * Creates an ATA for a specific token mint owned by the vault PDA
+ */
+export async function createInitVaultTokenAccountInstruction(
+  owner: PublicKey,
+  tokenMint: PublicKey
+): Promise<TransactionInstruction> {
+  const [vaultPDA] = getVaultPDA(owner);
+  
+  // Get the vault's ATA for this token mint
+  const vaultTokenAccount = await getAssociatedTokenAddress(
+    tokenMint,
+    vaultPDA,
+    true // allowOwnerOffCurve - required for PDAs
+  );
+  
+  const keys = [
+    { pubkey: owner, isSigner: true, isWritable: true },
+    { pubkey: vaultPDA, isSigner: false, isWritable: false },
+    { pubkey: tokenMint, isSigner: false, isWritable: false },
+    { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+  
+  return new TransactionInstruction({
+    keys,
+    programId: VAULT_PROGRAM_ID,
+    data: INIT_VAULT_TOKEN_ACCOUNT_DISCRIMINATOR,
+  });
+}
+
+/**
+ * Build a transaction to initialize vault with multiple token accounts
+ * Creates the vault (if needed) and ATAs for all specified token mints
+ */
+export async function buildInitVaultWithTokensTransaction(
+  connection: Connection,
+  owner: PublicKey,
+  tokenMints: PublicKey[]
+): Promise<Transaction> {
+  const transaction = new Transaction();
+  const [vaultPDA] = getVaultPDA(owner);
+  
+  // Check if vault exists, if not add initialization instruction
+  const hasVault = await vaultExists(connection, owner);
+  if (!hasVault) {
+    transaction.add(createInitializeVaultInstruction(owner));
+  }
+  
+  // Add init token account instructions for each mint (skip existing ATAs)
+  for (const tokenMint of tokenMints) {
+    const vaultTokenAccount = await getAssociatedTokenAddress(
+      tokenMint,
+      vaultPDA,
+      true // allowOwnerOffCurve - required for PDAs
+    );
+    
+    // Check if ATA already exists
+    const ataInfo = await connection.getAccountInfo(vaultTokenAccount);
+    if (!ataInfo) {
+      const initAtaIx = await createInitVaultTokenAccountInstruction(owner, tokenMint);
+      transaction.add(initAtaIx);
+    }
+  }
   
   return transaction;
 }

@@ -920,6 +920,8 @@ export interface VaultBalanceInfo {
   vaultAddress: string;
   solBalance: number;
   tokens: TokenBalanceInfo[];
+  /** Total number of ATAs (including zero balance) */
+  ataCount: number;
 }
 
 // Vault program ID (as Address for @solana/kit)
@@ -1010,25 +1012,16 @@ export function useVaultBalance(
       console.log(`[useVaultBalance] Found ${tokenAccounts.length} token accounts`);
       
       const tokens: TokenBalanceInfo[] = [];
+      let ataCount = tokenAccounts.length; // Count all ATAs including zero balance
       
-      // Fetch known token list for metadata (optional, will fallback gracefully)
-      const tokenList: Map<string, { symbol: string; name: string; logoURI?: string }> = new Map();
-      try {
-        // Try to fetch Jupiter's token list for metadata
-        const response = await fetch('https://token.jup.ag/strict');
-        if (response.ok) {
-          const data = await response.json();
-          for (const token of data) {
-            tokenList.set(token.address, {
-              symbol: token.symbol,
-              name: token.name,
-              logoURI: token.logoURI,
-            });
-          }
-        }
-      } catch (err) {
-        console.log('[useVaultBalance] Could not fetch token list, continuing without metadata');
-      }
+      // Initialize token metadata map with our known tokens first (fallback)
+      const tokenList: Map<string, { symbol: string; name: string; logoURI?: string }> = new Map([
+        ['So11111111111111111111111111111111111111112', { symbol: 'wSOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' }],
+        ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', { symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' }],
+        ['Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', { symbol: 'USDT', name: 'Tether USD', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' }],
+        ['6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM', { symbol: 'LUMEN', name: 'LUMEN', logoURI: 'https://ipfs.io/ipfs/QmVbBhRm2aSf1HAQWYkdUWeuxRFw9hooR1vQYFBjSWBkuF' }],
+        ['USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB', { symbol: 'USD1', name: 'World Liberty Financial USD', logoURI: 'https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png' }],
+      ]);
       
       for (const ta of tokenAccounts) {
         const info = ta?.account?.data?.parsed?.info;
@@ -1039,12 +1032,10 @@ export function useVaultBalance(
         
         if (!mint || !tokenAmount) continue;
         
-        // Skip zero balance tokens
-        if (tokenAmount.uiAmount === 0) continue;
-        
         // Get metadata from token list if available
         const metadata = tokenList.get(mint);
         
+        // Include all tokens (even zero balance) so we can show which ATAs exist
         tokens.push({
           mint,
           amount: tokenAmount.amount || '0',
@@ -1086,6 +1077,7 @@ export function useVaultBalance(
         }).value ?? [];
         
         console.log(`[useVaultBalance] Found ${token2022Accounts.length} Token-2022 accounts`);
+        ataCount += token2022Accounts.length;
         
         for (const ta of token2022Accounts) {
           const info = ta?.account?.data?.parsed?.info;
@@ -1096,11 +1088,9 @@ export function useVaultBalance(
           
           if (!mint || !tokenAmount) continue;
           
-          // Skip zero balance tokens
-          if (tokenAmount.uiAmount === 0) continue;
-          
           const metadata = tokenList.get(mint);
           
+          // Include all tokens (even zero balance)
           tokens.push({
             mint,
             amount: tokenAmount.amount || '0',
@@ -1119,6 +1109,7 @@ export function useVaultBalance(
         vaultAddress: vaultPDA,
         solBalance,
         tokens,
+        ataCount,
       };
     },
     enabled,

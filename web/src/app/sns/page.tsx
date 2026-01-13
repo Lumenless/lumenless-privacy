@@ -1136,8 +1136,25 @@ function CreateSubdomainModal({ visible, onClose, parentDomain, onSuccess }: Cre
   );
 }
 
+// Default tokens to initialize vault with
+const DEFAULT_VAULT_TOKENS = [
+  { mint: 'So11111111111111111111111111111111111111112', symbol: 'wSOL', name: 'Wrapped SOL', decimals: 9, logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
+  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC', name: 'USD Coin', decimals: 6, logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
+  { mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', symbol: 'USDT', name: 'Tether USD', decimals: 6, logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' },
+  { mint: '6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM', symbol: 'LUMEN', name: 'Lumen', decimals: 9, logoUri: undefined },
+  { mint: 'USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB', symbol: 'USD1', name: 'USD1 Stablecoin', decimals: 6, logoUri: undefined },
+];
+
 function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerAddress: string | null }) {
   const vaultBalance = useVaultBalance(endpoint, ownerAddress, { enabled: !!ownerAddress });
+  const { signer } = useTransactionSigner();
+  const queryClient = useQueryClient();
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [isCreatingAta, setIsCreatingAta] = useState(false);
+  const [ataError, setAtaError] = useState<string | null>(null);
+  const [ataSuccess, setAtaSuccess] = useState<string | null>(null);
+  const [showAddTokenModal, setShowAddTokenModal] = useState(false);
+  const [customMint, setCustomMint] = useState('');
   
   // Format large numbers with commas
   const formatNumber = (num: number) => {
@@ -1150,10 +1167,191 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
   // Truncate address for display
   const truncateAddress = (addr: string) => `${addr.slice(0, 4)}...${addr.slice(-4)}`;
 
+  // Create a signTransaction function
+  const signTransaction = useMemo(() => {
+    if (!signer) return null;
+    return async (params: { transaction: Uint8Array }) => {
+      const tx = Transaction.from(params.transaction);
+      const signed = await signer.signTransaction(tx);
+      if (signed instanceof Transaction || signed instanceof VersionedTransaction) {
+        return Buffer.from(signed.serialize()).toString('base64');
+      }
+      if (signed instanceof Uint8Array) {
+        return Buffer.from(signed).toString('base64');
+      }
+      throw new Error('Unexpected transaction type from signer');
+    };
+  }, [signer]);
+
+  // Initialize vault with all default token ATAs through smart contract
+  const handleInitVault = useCallback(async () => {
+    if (!ownerAddress || !signTransaction) {
+      setAtaError('Wallet not connected');
+      return;
+    }
+
+    try {
+      setIsInitializing(true);
+      setAtaError(null);
+      setAtaSuccess(null);
+
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(ownerAddress);
+      
+      // Import vault service function
+      const { buildInitVaultWithTokensTransaction } = await import('@/lib/vault-service');
+      
+      // Convert token mint strings to PublicKeys
+      const tokenMints = DEFAULT_VAULT_TOKENS.map(t => new PublicKey(t.mint));
+      
+      // Build transaction through smart contract
+      const transaction = await buildInitVaultWithTokensTransaction(
+        connection,
+        ownerPubkey,
+        tokenMints
+      );
+      
+      if (transaction.instructions.length === 0) {
+        setAtaSuccess('Vault already initialized with all default tokens!');
+        return;
+      }
+      
+      // Count how many tokens will be initialized
+      const tokensToCreate = DEFAULT_VAULT_TOKENS
+        .filter((_, i) => transaction.instructions.some(ix => 
+          ix.keys.some(k => k.pubkey.equals(tokenMints[i]))
+        ))
+        .map(t => t.symbol);
+      
+      transaction.feePayer = ownerPubkey;
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      
+      // Sign and send
+      const signedTx = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      const sig = await connection.sendRawTransaction(Buffer.from(signedTx, 'base64'), {
+        skipPreflight: false,
+      });
+      
+      await connection.confirmTransaction(sig, 'confirmed');
+      
+      console.log(`Initialized vault through smart contract:`, sig);
+      setAtaSuccess(`Vault initialized! TX: ${sig.slice(0, 8)}...`);
+      
+      // Refresh balance
+      queryClient.invalidateQueries({ queryKey: ['vault-balance'] });
+    } catch (err) {
+      console.error('Error initializing vault:', err);
+      setAtaError(err instanceof Error ? err.message : 'Failed to initialize vault');
+    } finally {
+      setIsInitializing(false);
+    }
+  }, [ownerAddress, endpoint, signTransaction, queryClient]);
+
+  // Create ATA for a custom token mint through smart contract
+  const handleCreateCustomAta = useCallback(async () => {
+    if (!ownerAddress || !signTransaction || !customMint.trim()) {
+      setAtaError('Please enter a valid token mint address');
+      return;
+    }
+
+    // Validate mint address
+    let mintPubkey: PublicKey;
+    try {
+      mintPubkey = new PublicKey(customMint.trim());
+    } catch {
+      setAtaError('Invalid mint address format');
+      return;
+    }
+
+    try {
+      setIsCreatingAta(true);
+      setAtaError(null);
+      setAtaSuccess(null);
+
+      const connection = new Connection(endpoint, 'confirmed');
+      const ownerPubkey = new PublicKey(ownerAddress);
+      
+      // Verify mint exists
+      const mintInfo = await connection.getAccountInfo(mintPubkey);
+      if (!mintInfo) {
+        setAtaError('Token mint not found on chain');
+        return;
+      }
+      
+      // Import vault service functions
+      const { getVaultPDA, createInitVaultTokenAccountInstruction, vaultExists, createInitializeVaultInstruction } = await import('@/lib/vault-service');
+      const { getAssociatedTokenAddress } = await import('@solana/spl-token');
+      
+      const [vaultPDA] = getVaultPDA(ownerPubkey);
+      
+      // Get the ATA address for the vault
+      const vaultAta = await getAssociatedTokenAddress(
+        mintPubkey,
+        vaultPDA,
+        true // allowOwnerOffCurve - REQUIRED for PDAs!
+      );
+      
+      // Check if ATA already exists
+      const ataInfo = await connection.getAccountInfo(vaultAta);
+      if (ataInfo) {
+        setAtaSuccess('Token account already exists!');
+        setShowAddTokenModal(false);
+        setCustomMint('');
+        return;
+      }
+      
+      const transaction = new Transaction();
+      
+      // Check if vault exists, if not initialize it first
+      const hasVault = await vaultExists(connection, ownerPubkey);
+      if (!hasVault) {
+        transaction.add(createInitializeVaultInstruction(ownerPubkey));
+      }
+      
+      // Create ATA through smart contract
+      const initAtaIx = await createInitVaultTokenAccountInstruction(ownerPubkey, mintPubkey);
+      transaction.add(initAtaIx);
+      
+      transaction.feePayer = ownerPubkey;
+      
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      
+      // Sign and send
+      const signedTx = await signTransaction({
+        transaction: transaction.serialize({ requireAllSignatures: false }),
+      });
+      
+      const sig = await connection.sendRawTransaction(Buffer.from(signedTx, 'base64'), {
+        skipPreflight: false,
+      });
+      
+      await connection.confirmTransaction(sig, 'confirmed');
+      
+      console.log(`Created custom token ATA through smart contract:`, sig);
+      setAtaSuccess('Token enabled! You can now receive this token at your vault.');
+      setShowAddTokenModal(false);
+      setCustomMint('');
+      
+      // Refresh balance
+      queryClient.invalidateQueries({ queryKey: ['vault-balance'] });
+    } catch (err) {
+      console.error('Error creating ATA:', err);
+      setAtaError(err instanceof Error ? err.message : 'Failed to create token account');
+    } finally {
+      setIsCreatingAta(false);
+    }
+  }, [ownerAddress, endpoint, signTransaction, queryClient, customMint]);
+
   if (!ownerAddress) {
     return (
       <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
-        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <h2 className="text-2xl font-semibold mb-2">My Vault</h2>
         <p className="text-sm text-muted-foreground">Connect your wallet to view vault balance</p>
       </Card>
     );
@@ -1162,8 +1360,8 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
   if (vaultBalance.isLoading) {
     return (
       <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
-        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
-        <p className="text-sm text-muted-foreground">Loading balance...</p>
+        <h2 className="text-2xl font-semibold mb-2">My Vault</h2>
+        <p className="text-sm text-muted-foreground">Loading...</p>
       </Card>
     );
   }
@@ -1171,8 +1369,8 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
   if (vaultBalance.error) {
     return (
       <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
-        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
-        <p className="text-sm text-destructive">Error loading balance</p>
+        <h2 className="text-2xl font-semibold mb-2">My Vault</h2>
+        <p className="text-sm text-destructive">Error loading vault</p>
       </Card>
     );
   }
@@ -1182,7 +1380,7 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
   if (!data) {
     return (
       <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
-        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <h2 className="text-2xl font-semibold mb-2">My Vault</h2>
         <p className="text-sm text-muted-foreground mb-4">
           Your vault has not been initialized yet. Secure a domain to create your vault.
         </p>
@@ -1194,7 +1392,7 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
     <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-2xl font-semibold mb-1">My Vault Balance</h2>
+          <h2 className="text-2xl font-semibold mb-1">My Vault</h2>
           <div className="flex items-center gap-2">
             <p className="text-sm text-muted-foreground">
               Vault: <span className="font-mono">{truncateAddress(data.vaultAddress)}</span>
@@ -1230,55 +1428,183 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
         </div>
       </div>
 
-      {/* Token Balances */}
-      {data.tokens.length > 0 ? (
+      {/* Status Messages */}
+      {ataError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+          {ataError}
+        </div>
+      )}
+      
+      {ataSuccess && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+          {ataSuccess}
+        </div>
+      )}
+
+      {/* Token Balances - check ataCount to determine if vault is initialized */}
+      {data.ataCount > 0 ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground mb-2">Tokens ({data.tokens.length})</p>
-          {data.tokens.map((token) => (
-            <div
-              key={token.mint}
-              className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors"
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-muted-foreground">
+              Token Accounts ({data.ataCount})
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowAddTokenModal(true)}
+              className="text-xs h-7"
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  {token.logoUri ? (
-                    <img 
-                      src={token.logoUri} 
-                      alt={token.symbol || 'Token'} 
-                      className="w-8 h-8 rounded-full"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-500">
-                      {token.symbol?.[0] || '?'}
+              + Enable New Token
+            </Button>
+          </div>
+          {data.tokens.length > 0 ? (
+            data.tokens.map((token) => (
+              <div
+                key={token.mint}
+                className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {token.logoUri ? (
+                      <img 
+                        src={token.logoUri} 
+                        alt={token.symbol || 'Token'} 
+                        className="w-8 h-8 rounded-full"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-500">
+                        {token.symbol?.[0] || '?'}
+                      </div>
+                    )}
+                    <div>
+                      <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{truncateAddress(token.mint)}</p>
                     </div>
-                  )}
-                  <div>
-                    <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
-                    <p className="text-xs text-muted-foreground font-mono">{truncateAddress(token.mint)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium">{token.uiAmount > 0 ? formatNumber(token.uiAmount) : '0'}</p>
+                    <a
+                      href={`https://solscan.io/token/${token.mint}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-primary hover:underline"
+                    >
+                      View →
+                    </a>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-medium">{formatNumber(token.uiAmount)}</p>
-                  <a
-                    href={`https://solscan.io/token/${token.mint}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline"
-                  >
-                    View →
-                  </a>
-                </div>
               </div>
-            </div>
-          ))}
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              All token balances are zero
+            </p>
+          )}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground text-center py-4">
-          No tokens in vault yet
-        </p>
+        /* No ATAs yet - show Init Vault button */
+        <div className="text-center py-6">
+          <p className="text-sm text-muted-foreground mb-4">
+            Your vault has no token accounts yet. Initialize to start receiving tokens.
+          </p>
+          <Button
+            onClick={handleInitVault}
+            disabled={isInitializing}
+            className="mb-4"
+          >
+            {isInitializing ? 'Initializing...' : '🚀 Init Vault'}
+          </Button>
+          
+          <div className="mt-4 pt-4 border-t border-border">
+            <p className="text-xs font-medium text-muted-foreground mb-2">Will enable these tokens:</p>
+            <div className="space-y-1">
+              {DEFAULT_VAULT_TOKENS.map((token) => (
+                <p key={token.mint} className="text-xs text-muted-foreground font-mono">
+                  <span className="font-semibold text-foreground">{token.symbol}</span>{' '}
+                  ({truncateAddress(token.mint)})
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Supported Tokens Section (shown when vault has ATAs) */}
+      {data.ataCount > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground mb-2">Supported Tokens:</p>
+          <div className="grid grid-cols-1 gap-1">
+            {DEFAULT_VAULT_TOKENS.map((token) => {
+              const hasAta = data.tokens.some(t => t.mint === token.mint);
+              return (
+                <p key={token.mint} className="text-xs font-mono">
+                  <span className={`font-semibold ${hasAta ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {hasAta ? '✓ ' : ''}{token.symbol}
+                  </span>{' '}
+                  <span className="text-muted-foreground">({truncateAddress(token.mint)})</span>
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Add Token Modal */}
+      {showAddTokenModal && (
+        <>
+          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setShowAddTokenModal(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <Card className="w-full max-w-md p-6 bg-white shadow-xl">
+              <h3 className="text-lg font-semibold mb-2">Enable New Token</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Enter the token mint address to enable receiving this token in your vault.
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Token Mint Address</label>
+                  <Input
+                    type="text"
+                    placeholder="Enter token mint address..."
+                    value={customMint}
+                    onChange={(e) => {
+                      setAtaError(null);
+                      setCustomMint(e.target.value);
+                    }}
+                    className={ataError ? 'border-destructive' : ''}
+                    disabled={isCreatingAta}
+                  />
+                  {ataError && (
+                    <p className="text-xs text-destructive mt-1">{ataError}</p>
+                  )}
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowAddTokenModal(false);
+                      setCustomMint('');
+                      setAtaError(null);
+                    }}
+                    disabled={isCreatingAta}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCreateCustomAta}
+                    disabled={isCreatingAta || !customMint.trim()}
+                  >
+                    {isCreatingAta ? 'Creating...' : 'Enable Token'}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </>
       )}
     </Card>
   );

@@ -145,6 +145,16 @@ pub mod solana_program {
         Ok(())
     }
 
+    /// Initialize a token account for the vault to receive a specific token
+    /// This creates an ATA owned by the vault PDA for the specified mint
+    pub fn init_vault_token_account(ctx: Context<InitVaultTokenAccount>) -> Result<()> {
+        msg!(
+            "Token account initialized for mint {} in vault",
+            ctx.accounts.token_mint.key()
+        );
+        Ok(())
+    }
+
     /// Withdraw an unwrapped SNS domain from the user's vault
     /// Transfers name registry ownership back to the user
     pub fn withdraw_unwrapped_domain(ctx: Context<WithdrawUnwrappedDomain>) -> Result<()> {
@@ -315,6 +325,38 @@ pub struct WithdrawDomain<'info> {
         associated_token::token_program = token_program,
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitVaultTokenAccount<'info> {
+    /// The owner of the vault (payer for the ATA creation)
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    /// The user's vault
+    #[account(
+        seeds = [VAULT_SEED, owner.key().as_ref()],
+        bump = vault.bump,
+        has_one = owner @ VaultError::UnauthorizedAccess
+    )]
+    pub vault: Account<'info, UserVault>,
+
+    /// The token mint for which to create an ATA
+    pub token_mint: InterfaceAccount<'info, Mint>,
+
+    /// The vault's token account (ATA) to be initialized
+    #[account(
+        init,
+        payer = owner,
+        associated_token::mint = token_mint,
+        associated_token::authority = vault,
+        associated_token::token_program = token_program,
+    )]
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
