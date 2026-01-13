@@ -27,7 +27,8 @@ import {
   useDomainsForOwner,
   useSubdomainsForOwner,
   useSecuredDomains,
-  SNSService
+  useVaultBalance,
+  SNSService,
 } from '@/lib/sns-service';
 import { register } from '@bonfida/sub-register';
 import { transferSubdomain } from '@bonfida/spl-name-service';
@@ -1135,6 +1136,154 @@ function CreateSubdomainModal({ visible, onClose, parentDomain, onSuccess }: Cre
   );
 }
 
+function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerAddress: string | null }) {
+  const vaultBalance = useVaultBalance(endpoint, ownerAddress, { enabled: !!ownerAddress });
+  
+  // Format large numbers with commas
+  const formatNumber = (num: number) => {
+    if (num < 0.0001 && num > 0) {
+      return num.toExponential(4);
+    }
+    return num.toLocaleString('en-US', { maximumFractionDigits: 6 });
+  };
+  
+  // Truncate address for display
+  const truncateAddress = (addr: string) => `${addr.slice(0, 4)}...${addr.slice(-4)}`;
+
+  if (!ownerAddress) {
+    return (
+      <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
+        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <p className="text-sm text-muted-foreground">Connect your wallet to view vault balance</p>
+      </Card>
+    );
+  }
+
+  if (vaultBalance.isLoading) {
+    return (
+      <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
+        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <p className="text-sm text-muted-foreground">Loading balance...</p>
+      </Card>
+    );
+  }
+
+  if (vaultBalance.error) {
+    return (
+      <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
+        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <p className="text-sm text-destructive">Error loading balance</p>
+      </Card>
+    );
+  }
+
+  const data = vaultBalance.data;
+
+  if (!data) {
+    return (
+      <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
+        <h2 className="text-2xl font-semibold mb-2">My Vault Balance</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Your vault has not been initialized yet. Secure a domain to create your vault.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="w-full max-w-2xl p-6 border border-border shadow-xl mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-semibold mb-1">My Vault Balance</h2>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-muted-foreground">
+              Vault: <span className="font-mono">{truncateAddress(data.vaultAddress)}</span>
+            </p>
+            <a
+              href={`https://solscan.io/account/${data.vaultAddress}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline"
+            >
+              View →
+            </a>
+          </div>
+        </div>
+      </div>
+
+      {/* SOL Balance */}
+      <div className="rounded-lg border border-border bg-gradient-to-r from-purple-50 to-blue-50 p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+              <Image src="/sol.svg" alt="SOL" width={24} height={24} />
+            </div>
+            <div>
+              <p className="font-semibold text-lg">SOL</p>
+              <p className="text-xs text-muted-foreground">Solana</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="font-semibold text-lg">{formatNumber(data.solBalance)} SOL</p>
+            <p className="text-xs text-muted-foreground">Native balance</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Token Balances */}
+      {data.tokens.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground mb-2">Tokens ({data.tokens.length})</p>
+          {data.tokens.map((token) => (
+            <div
+              key={token.mint}
+              className="rounded-lg border border-border bg-card/50 p-3 hover:bg-card/80 transition-colors"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {token.logoUri ? (
+                    <img 
+                      src={token.logoUri} 
+                      alt={token.symbol || 'Token'} 
+                      className="w-8 h-8 rounded-full"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-500">
+                      {token.symbol?.[0] || '?'}
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
+                    <p className="text-xs text-muted-foreground font-mono">{truncateAddress(token.mint)}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-medium">{formatNumber(token.uiAmount)}</p>
+                  <a
+                    href={`https://solscan.io/token/${token.mint}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline"
+                  >
+                    View →
+                  </a>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground text-center py-4">
+          No tokens in vault yet
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function DomainsView() {
   // Create RPC endpoint
   const endpoint = useMemo(() => {
@@ -1438,7 +1587,10 @@ function DomainsView() {
       </header>
 
       {/* Main */}
-      <main className="px-4 md:px-8 py-8 flex justify-center">
+      <main className="px-4 md:px-8 py-8 flex flex-col items-center">
+        {/* Vault Balance Card */}
+        {connected && <VaultBalanceCard endpoint={endpoint} ownerAddress={ownerAddress} />}
+        
         <Card className="w-full max-w-2xl p-6 border border-border shadow-xl">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -1520,9 +1672,14 @@ function DomainsView() {
             <div className="space-y-3">
               {allDomains.map((domainItem) => {
                 const pubkeyStr = typeof domainItem.pubkey === 'string' ? domainItem.pubkey : String(domainItem.pubkey);
+                // Use domain name as key since it's what uniquely identifies each item
+                // (pubkey can be shared temporarily during state transitions)
+                const uniqueKey = domainItem.isSubdomain 
+                  ? `${domainItem.domain}.${domainItem.parentDomain}` 
+                  : domainItem.domain;
                 return (
                   <DomainItem 
-                    key={pubkeyStr} 
+                    key={uniqueKey} 
                     domain={domainItem.domain}
                     pubkey={pubkeyStr}
                     isWrapped={domainItem.isWrapped}

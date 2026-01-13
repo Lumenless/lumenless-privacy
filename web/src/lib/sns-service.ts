@@ -901,6 +901,233 @@ export function useSubdomainsForOwner(
 }
 
 /**
+ * Token balance information
+ */
+export interface TokenBalanceInfo {
+  mint: string;
+  amount: string;
+  decimals: number;
+  uiAmount: number;
+  symbol?: string;
+  name?: string;
+  logoUri?: string;
+}
+
+/**
+ * Vault balance information
+ */
+export interface VaultBalanceInfo {
+  vaultAddress: string;
+  solBalance: number;
+  tokens: TokenBalanceInfo[];
+}
+
+// Vault program ID (as Address for @solana/kit)
+const VAULT_PROGRAM_ID = address('LUMPd26Acz4wqS8EBuoxPN2zhwCUF4npbkrqhLbM9AL');
+
+/**
+ * Get the vault PDA for a user using @solana/kit
+ */
+async function getVaultPDAKit(ownerAddress: Address): Promise<Address> {
+  const ownerBytes = bs58.decode(ownerAddress);
+  
+  const [pda] = await getProgramDerivedAddress({
+    programAddress: VAULT_PROGRAM_ID,
+    seeds: [
+      Buffer.from('vault'),
+      Buffer.from(ownerBytes),
+    ],
+  });
+
+  return pda;
+}
+
+/**
+ * React hook to fetch all token balances from the user's vault PDA
+ * Uses @solana/kit for all RPC calls
+ * @param endpoint The Solana RPC endpoint string
+ * @param ownerAddress The address of the wallet owner
+ * @param options Optional query options
+ */
+export function useVaultBalance(
+  endpoint: string | null,
+  ownerAddress: string | Address | null,
+  options?: { enabled?: boolean }
+) {
+  const enabled = options?.enabled !== false && !!endpoint && !!ownerAddress;
+  const ownerStr = ownerAddress ? String(ownerAddress) : '';
+
+  return useQuery({
+    queryKey: ['vault-balance', endpoint, ownerStr],
+    queryFn: async (): Promise<VaultBalanceInfo | null> => {
+      if (!endpoint || !ownerAddress) {
+        throw new Error('Endpoint and owner address are required');
+      }
+      
+      const rpc = createSolanaRpc(endpoint);
+      const ownerAddr = address(ownerStr);
+      const vaultPDA = await getVaultPDAKit(ownerAddr);
+      
+      console.log(`[useVaultBalance] Fetching balance for vault: ${vaultPDA}`);
+      
+      // Check if vault exists using @solana/kit
+      const vaultInfo = await rpc.getAccountInfo(vaultPDA, { encoding: 'base64' }).send();
+      if (!vaultInfo.value) {
+        console.log(`[useVaultBalance] Vault does not exist`);
+        return null;
+      }
+      
+      // Get SOL balance of vault (lamports to SOL)
+      const solBalance = Number(vaultInfo.value.lamports) / 1e9;
+      console.log(`[useVaultBalance] Vault SOL balance: ${solBalance}`);
+      
+      // Get all token accounts owned by the vault PDA using @solana/kit
+      const tokenAccountsResponse = await rpc.getTokenAccountsByOwner(
+        vaultPDA, 
+        { programId: TOKEN_PROGRAM_ID }, 
+        { encoding: 'jsonParsed' }
+      ).send();
+      
+      const tokenAccounts = (tokenAccountsResponse as unknown as { 
+        value?: Array<{ 
+          account: { 
+            data: { 
+              parsed?: { 
+                info?: { 
+                  mint?: string; 
+                  tokenAmount?: { 
+                    decimals?: number; 
+                    amount?: string;
+                    uiAmount?: number;
+                  } 
+                } 
+              } 
+            } 
+          } 
+        }> 
+      }).value ?? [];
+      
+      console.log(`[useVaultBalance] Found ${tokenAccounts.length} token accounts`);
+      
+      const tokens: TokenBalanceInfo[] = [];
+      
+      // Fetch known token list for metadata (optional, will fallback gracefully)
+      const tokenList: Map<string, { symbol: string; name: string; logoURI?: string }> = new Map();
+      try {
+        // Try to fetch Jupiter's token list for metadata
+        const response = await fetch('https://token.jup.ag/strict');
+        if (response.ok) {
+          const data = await response.json();
+          for (const token of data) {
+            tokenList.set(token.address, {
+              symbol: token.symbol,
+              name: token.name,
+              logoURI: token.logoURI,
+            });
+          }
+        }
+      } catch (err) {
+        console.log('[useVaultBalance] Could not fetch token list, continuing without metadata');
+      }
+      
+      for (const ta of tokenAccounts) {
+        const info = ta?.account?.data?.parsed?.info;
+        if (!info) continue;
+        
+        const mint = info.mint;
+        const tokenAmount = info.tokenAmount;
+        
+        if (!mint || !tokenAmount) continue;
+        
+        // Skip zero balance tokens
+        if (tokenAmount.uiAmount === 0) continue;
+        
+        // Get metadata from token list if available
+        const metadata = tokenList.get(mint);
+        
+        tokens.push({
+          mint,
+          amount: tokenAmount.amount || '0',
+          decimals: tokenAmount.decimals || 0,
+          uiAmount: tokenAmount.uiAmount || 0,
+          symbol: metadata?.symbol,
+          name: metadata?.name,
+          logoUri: metadata?.logoURI,
+        });
+        
+        console.log(`[useVaultBalance] Token: ${metadata?.symbol || mint.slice(0, 8)}... Amount: ${tokenAmount.uiAmount}`);
+      }
+      
+      // Also check Token-2022 program
+      try {
+        const token2022Response = await rpc.getTokenAccountsByOwner(
+          vaultPDA, 
+          { programId: TOKEN_2022_PROGRAM_ID }, 
+          { encoding: 'jsonParsed' }
+        ).send();
+        
+        const token2022Accounts = (token2022Response as unknown as { 
+          value?: Array<{ 
+            account: { 
+              data: { 
+                parsed?: { 
+                  info?: { 
+                    mint?: string; 
+                    tokenAmount?: { 
+                      decimals?: number; 
+                      amount?: string;
+                      uiAmount?: number;
+                    } 
+                  } 
+                } 
+              } 
+            } 
+          }> 
+        }).value ?? [];
+        
+        console.log(`[useVaultBalance] Found ${token2022Accounts.length} Token-2022 accounts`);
+        
+        for (const ta of token2022Accounts) {
+          const info = ta?.account?.data?.parsed?.info;
+          if (!info) continue;
+          
+          const mint = info.mint;
+          const tokenAmount = info.tokenAmount;
+          
+          if (!mint || !tokenAmount) continue;
+          
+          // Skip zero balance tokens
+          if (tokenAmount.uiAmount === 0) continue;
+          
+          const metadata = tokenList.get(mint);
+          
+          tokens.push({
+            mint,
+            amount: tokenAmount.amount || '0',
+            decimals: tokenAmount.decimals || 0,
+            uiAmount: tokenAmount.uiAmount || 0,
+            symbol: metadata?.symbol,
+            name: metadata?.name,
+            logoUri: metadata?.logoURI,
+          });
+        }
+      } catch (err) {
+        console.log('[useVaultBalance] Token-2022 query failed, continuing');
+      }
+      
+      return {
+        vaultAddress: vaultPDA,
+        solBalance,
+        tokens,
+      };
+    },
+    enabled,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
  * React hook to fetch all secured (vaulted) SNS domains for a user
  * These are domains that have been deposited into the user's vault PDA
  * @param endpoint The Solana RPC endpoint string
