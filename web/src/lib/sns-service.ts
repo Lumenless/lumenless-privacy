@@ -3,7 +3,7 @@ import { PublicKey, Connection } from '@solana/web3.js'; // Temporary - only for
 import { useQuery } from '@tanstack/react-query';
 import { bs58 } from '@coral-xyz/anchor/dist/cjs/utils/bytes';
 import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
-import { getDomainKeySync, NameRegistryState, reverseLookupBatch, NAME_PROGRAM_ID, findSubdomains, ROOT_DOMAIN_ACCOUNT, reverseLookup } from '@bonfida/spl-name-service';
+import { getDomainKeySync, NameRegistryState, NAME_PROGRAM_ID, ROOT_DOMAIN_ACCOUNT, reverseLookup } from '@bonfida/spl-name-service';
 
 import {
   getDomainRecord,
@@ -11,14 +11,12 @@ import {
   Record as SnsRecord,
 } from '@solana-name-service/sns-sdk-kit';
 
+// Import Metaplex service for token metadata
+import { findMetadataPda, fetchTokenMetadataBatch, TOKEN_METADATA_PROGRAM_ID } from './metaplex-service';
+
 // Type for RPC (return type of createSolanaRpc)
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
 
-/**
- * Metaplex Token Metadata Program ID
- * Used to check if a domain is wrapped into an NFT
- */
-const TOKEN_METADATA_PROGRAM_ID = address('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 const TOKEN_PROGRAM_ID = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const TOKEN_2022_PROGRAM_ID = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'); // token-2022
 const SOL_DOMAIN_COLLECTION_ADDRESS = 'E5ZnBpH9DYcxRkumKdS4ayJ3Ftb6o3E8wSbXw4N92GWg';
@@ -61,27 +59,6 @@ function decodeAccountDataToBuffer(data: unknown): Buffer | null {
   }
 
   return null;
-}
-
-/**
- * Finds the metadata PDA for a given mint address
- */
-async function findMetadataPda(mint: Address): Promise<Address> {
-  // PDA: ["metadata", token_metadata_program_id, mint]
-  // Convert addresses (base58 strings) to bytes for seeds
-  const metadataProgramBytes = bs58.decode(TOKEN_METADATA_PROGRAM_ID);
-  const mintBytes = bs58.decode(mint);
-  
-  const [pda] = await getProgramDerivedAddress({
-    programAddress: TOKEN_METADATA_PROGRAM_ID,
-    seeds: [
-      Buffer.from('metadata'),
-      Buffer.from(metadataProgramBytes),
-      Buffer.from(mintBytes),
-    ],
-  });
-
-  return pda;
 }
 
 /**
@@ -1015,7 +992,7 @@ export function useVaultBalance(
       let ataCount = tokenAccounts.length; // Count all ATAs including zero balance
       
       // Initialize token metadata map with our known tokens first (fallback)
-      const tokenList: Map<string, { symbol: string; name: string; logoURI?: string }> = new Map([
+      const tokenList: Map<string, { symbol?: string; name?: string; logoURI?: string }> = new Map([
         ['So11111111111111111111111111111111111111112', { symbol: 'wSOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' }],
         ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', { symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' }],
         ['Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', { symbol: 'USDT', name: 'Tether USD', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' }],
@@ -1023,6 +1000,31 @@ export function useVaultBalance(
         ['USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB', { symbol: 'USD1', name: 'World Liberty Financial USD', logoURI: 'https://raw.githubusercontent.com/worldliberty/usd1-metadata/refs/heads/main/logo.png' }],
       ]);
       
+      // Collect all mints that need Metaplex metadata lookup
+      const unknownMints: string[] = [];
+      for (const ta of tokenAccounts) {
+        const info = ta?.account?.data?.parsed?.info;
+        if (!info?.mint) continue;
+        if (!tokenList.has(info.mint)) {
+          unknownMints.push(info.mint);
+        }
+      }
+      
+      // Fetch Metaplex metadata for unknown tokens using MetaplexService
+      if (unknownMints.length > 0) {
+        const metaplexMetadata = await fetchTokenMetadataBatch(rpc, unknownMints, { fetchImages: true });
+        
+        // Add fetched metadata to tokenList
+        for (const [mintStr, metadata] of metaplexMetadata) {
+          tokenList.set(mintStr, {
+            symbol: metadata.symbol,
+            name: metadata.name,
+            logoURI: metadata.image, // Use the actual image URL from off-chain metadata
+          });
+        }
+      }
+      
+      // Now process all token accounts with enriched metadata
       for (const ta of tokenAccounts) {
         const info = ta?.account?.data?.parsed?.info;
         if (!info) continue;
@@ -1032,7 +1034,7 @@ export function useVaultBalance(
         
         if (!mint || !tokenAmount) continue;
         
-        // Get metadata from token list if available
+        // Get metadata from token list (now includes Metaplex data)
         const metadata = tokenList.get(mint);
         
         // Include all tokens (even zero balance) so we can show which ATAs exist
@@ -1079,6 +1081,31 @@ export function useVaultBalance(
         console.log(`[useVaultBalance] Found ${token2022Accounts.length} Token-2022 accounts`);
         ataCount += token2022Accounts.length;
         
+        // Collect unknown Token-2022 mints for Metaplex lookup
+        const unknownToken2022Mints: string[] = [];
+        for (const ta of token2022Accounts) {
+          const info = ta?.account?.data?.parsed?.info;
+          if (!info?.mint) continue;
+          if (!tokenList.has(info.mint)) {
+            unknownToken2022Mints.push(info.mint);
+          }
+        }
+        
+        // Fetch Metaplex metadata for unknown Token-2022 tokens using MetaplexService
+        if (unknownToken2022Mints.length > 0) {
+          const metaplexMetadata = await fetchTokenMetadataBatch(rpc, unknownToken2022Mints, { fetchImages: true });
+          
+          // Add fetched metadata to tokenList
+          for (const [mintStr, metadata] of metaplexMetadata) {
+            tokenList.set(mintStr, {
+              symbol: metadata.symbol,
+              name: metadata.name,
+              logoURI: metadata.image, // Use the actual image URL from off-chain metadata
+            });
+          }
+        }
+        
+        // Process Token-2022 accounts with enriched metadata
         for (const ta of token2022Accounts) {
           const info = ta?.account?.data?.parsed?.info;
           if (!info) continue;

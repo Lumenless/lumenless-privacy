@@ -1136,6 +1136,35 @@ function CreateSubdomainModal({ visible, onClose, parentDomain, onSuccess }: Cre
   );
 }
 
+// Token icon component with fallback placeholder
+function TokenIcon({ logoUri, symbol, size = 32 }: { logoUri?: string; symbol?: string; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  
+  const firstLetter = symbol?.[0]?.toUpperCase() || '?';
+  
+  // Show placeholder if no logo URI or if image failed to load
+  if (!logoUri || imgError) {
+    return (
+      <div 
+        className="rounded-full bg-gradient-to-br from-gray-300 to-gray-400 flex items-center justify-center font-bold text-gray-600 shadow-inner"
+        style={{ width: size, height: size, fontSize: size * 0.4 }}
+      >
+        {firstLetter}
+      </div>
+    );
+  }
+  
+  return (
+    <img
+      src={logoUri}
+      alt={symbol || 'Token'}
+      className="rounded-full object-cover"
+      style={{ width: size, height: size }}
+      onError={() => setImgError(true)}
+    />
+  );
+}
+
 // Default tokens to initialize vault with
 const DEFAULT_VAULT_TOKENS = [
   { mint: 'So11111111111111111111111111111111111111112', symbol: 'wSOL', name: 'Wrapped SOL', decimals: 9, logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
@@ -1465,20 +1494,7 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    {token.logoUri ? (
-                      <img 
-                        src={token.logoUri} 
-                        alt={token.symbol || 'Token'} 
-                        className="w-8 h-8 rounded-full"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-500">
-                        {token.symbol?.[0] || '?'}
-                      </div>
-                    )}
+                    <TokenIcon logoUri={token.logoUri} symbol={token.symbol} size={32} />
                     <div>
                       <p className="font-medium">{token.symbol || 'Unknown Token'}</p>
                       <p className="text-xs text-muted-foreground font-mono">{truncateAddress(token.mint)}</p>
