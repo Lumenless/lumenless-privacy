@@ -171,6 +171,24 @@ export default function Home() {
               />
             </motion.a>
           </motion.div>
+
+          {/* Contract Address */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.7 }}
+            className="pt-4"
+          >
+            <a
+              href="https://pump.fun/coin/6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card border border-border hover:border-primary transition-colors text-sm text-muted-foreground hover:text-primary"
+            >
+              <span className="font-medium">CA:</span>
+              <span className="font-mono">6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM</span>
+            </a>
+          </motion.div>
         </div>
       </main>
 
