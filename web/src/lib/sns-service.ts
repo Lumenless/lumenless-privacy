@@ -1260,8 +1260,24 @@ export function useSecuredDomains(
       const unwrappedDomains = await fetchVaultUnwrappedDomains(connection, ownerPubkey);
       console.log(`[useSecuredDomains] Found ${unwrappedDomains.length} unwrapped name accounts in vault`);
       
-      // Import findSubdomains to help identify subdomain names
-      const { findSubdomains: findSubdomainsForParent } = await import('@bonfida/spl-name-service');
+      // Helper function to retry an async operation up to 3 times
+      const retryAsync = async <T>(
+        fn: () => Promise<T>,
+        maxRetries: number = 3,
+        delayMs: number = 1000
+      ): Promise<T | null> => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            return await fn();
+          } catch (err) {
+            console.warn(`[useSecuredDomains] Attempt ${attempt}/${maxRetries} failed:`, err);
+            if (attempt < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+            }
+          }
+        }
+        return null;
+      };
       
       for (const { nameAccount, parentName } of unwrappedDomains) {
         try {
@@ -1270,86 +1286,93 @@ export function useSecuredDomains(
           // Check if it's a subdomain (parent is not SOL TLD and not default)
           const isSubdomain = parentName !== SOL_TLD_PARENT && parentName !== PublicKey.default.toBase58();
           
-          let domainName: string = 'unknown';
+          let domainName: string | null = null;
           let parentDomainName: string | undefined;
           
           if (isSubdomain) {
             // For subdomains:
-            // 1. Get the parent domain name via reverse lookup
-            // 2. Find subdomains of that parent to match our account
-            try {
-              // Get parent domain name first
+            // 1. First check localStorage cache (fastest)
+            // 2. Get the parent domain name via reverse lookup
+            // 3. Try to derive the subdomain name from the cache or known subdomains
+            
+            // Check cache first
+            const cachedName = typeof window !== 'undefined' 
+              ? localStorage.getItem(`secured-domain-${nameAccount}`) 
+              : null;
+              
+            if (cachedName) {
+              domainName = cachedName;
+              // Still need parent domain name for display
               const parentPubkey = new PublicKey(parentName);
-              parentDomainName = await reverseLookup(connection, parentPubkey);
+              parentDomainName = await retryAsync(() => reverseLookup(connection, parentPubkey)) ?? undefined;
+              console.log(`[useSecuredDomains] Found cached subdomain name: ${domainName}.${parentDomainName || 'unknown'}.sol`);
+            } else {
+              // Try to resolve parent domain name with retries
+              const parentPubkey = new PublicKey(parentName);
+              parentDomainName = await retryAsync(() => reverseLookup(connection, parentPubkey)) ?? undefined;
+              
+              if (!parentDomainName) {
+                console.warn(`[useSecuredDomains] Could not resolve parent domain for subdomain ${nameAccount} after 3 retries - skipping`);
+                continue;
+              }
+              
               console.log(`[useSecuredDomains] Parent domain resolved: ${parentDomainName}.sol`);
               
-              // Find all subdomains of this parent to get the name
-              // Use a fresh connection to avoid caching issues
+              // Try findSubdomains with retries (this can fail due to rate limiting)
+              const { findSubdomains: findSubdomainsForParent } = await import('@bonfida/spl-name-service');
               const freshConnection = new Connection(endpoint, { commitment: 'confirmed', disableRetryOnRateLimit: false });
-              console.log(`[useSecuredDomains] Calling findSubdomains for parent: ${parentDomainName} (${parentPubkey.toBase58()})`);
-              const subdomainsOfParent = await findSubdomainsForParent(freshConnection, parentPubkey);
-              console.log(`[useSecuredDomains] findSubdomains returned ${subdomainsOfParent.length} subdomains:`, subdomainsOfParent);
-              console.log(`[useSecuredDomains] Looking for nameAccount: ${nameAccount}`);
               
-              // Look for our subdomain account in the list
-              // findSubdomains returns string[] of subdomain names
-              let foundMatch = false;
-              for (const subName of subdomainsOfParent) {
-                // Derive the subdomain key from the name
-                const { pubkey: derivedKey } = getDomainKeySync(`${subName}.${parentDomainName}`);
-                console.log(`[useSecuredDomains] Checking ${subName}: derived=${derivedKey.toBase58()}, target=${nameAccount}`);
-                if (derivedKey.toBase58() === nameAccount) {
-                  domainName = subName;
-                  foundMatch = true;
-                  console.log(`[useSecuredDomains] ✓ Matched subdomain name: ${domainName}`);
-                  break;
+              const subdomainsOfParent = await retryAsync(
+                () => findSubdomainsForParent(freshConnection, parentPubkey),
+                3,
+                1000 // Longer delay for rate-limited endpoints
+              );
+              
+              if (subdomainsOfParent) {
+                console.log(`[useSecuredDomains] findSubdomains returned ${subdomainsOfParent.length} subdomains`);
+                
+                // Look for our subdomain account in the list
+                for (const subName of subdomainsOfParent) {
+                  const { pubkey: derivedKey } = getDomainKeySync(`${subName}.${parentDomainName}`);
+                  if (derivedKey.toBase58() === nameAccount) {
+                    domainName = subName;
+                    console.log(`[useSecuredDomains] ✓ Matched subdomain name: ${domainName}`);
+                    break;
+                  }
                 }
               }
               
-              if (!foundMatch) {
-                // Subdomain not found via findSubdomains - try localStorage cache
-                const cachedName = typeof window !== 'undefined' 
-                  ? localStorage.getItem(`secured-domain-${nameAccount}`) 
-                  : null;
-                  
-                if (cachedName) {
-                  domainName = cachedName;
-                  console.log(`[useSecuredDomains] Found cached subdomain name: ${domainName}`);
-                } else {
-                  console.warn(`[useSecuredDomains] Could not resolve subdomain name for ${nameAccount}`);
-                  // Try one more approach - check if we can derive from known subdomains
-                  domainName = `sub-${nameAccount.slice(0, 6)}`;
-                }
+              // If still not found, skip this domain
+              if (!domainName) {
+                console.warn(`[useSecuredDomains] Could not resolve subdomain name for ${nameAccount} after 3 retries - skipping`);
+                continue;
               }
-              
-              console.log(`[useSecuredDomains] ✓ Found secured subdomain: ${domainName}.${parentDomainName}.sol (nameAccount: ${nameAccount})`);
-            } catch (subErr) {
-              console.error(`[useSecuredDomains] Error resolving subdomain ${nameAccount}:`, subErr);
-              // Still add domain with partial info rather than skipping
-              domainName = `secured-sub`;
             }
           } else {
-            // Regular domain - reverse lookup should work
-            try {
-              domainName = await reverseLookup(connection, nameAccountPubkey);
-              console.log(`[useSecuredDomains] ✓ Found secured domain: ${domainName}.sol (nameAccount: ${nameAccount})`);
-            } catch (err) {
-              console.error(`[useSecuredDomains] Error with reverse lookup for domain ${nameAccount}:`, err);
-              // Skip domains we can't resolve rather than showing wrong name
+            // Regular domain - reverse lookup with retries
+            domainName = await retryAsync(() => reverseLookup(connection, nameAccountPubkey));
+            
+            if (!domainName) {
+              console.warn(`[useSecuredDomains] Could not resolve domain name for ${nameAccount} after 3 retries - skipping`);
               continue;
             }
+            
+            console.log(`[useSecuredDomains] ✓ Found secured domain: ${domainName}.sol (nameAccount: ${nameAccount})`);
           }
           
-          securedDomains.push({
-            domain: domainName,
-            pubkey: nameAccount,
-            isWrapped: false,
-            isSubdomain,
-            parentDomain: parentDomainName,
-          });
+          // Only add if we successfully resolved the domain name
+          if (domainName) {
+            securedDomains.push({
+              domain: domainName,
+              pubkey: nameAccount,
+              isWrapped: false,
+              isSubdomain,
+              parentDomain: parentDomainName,
+            });
+          }
         } catch (err) {
           console.error(`[useSecuredDomains] Error processing name account ${nameAccount}:`, err);
-          // Skip domains we can't process rather than showing wrong name
+          // Skip domains we can't process
           continue;
         }
       }

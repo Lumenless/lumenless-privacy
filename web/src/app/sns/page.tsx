@@ -145,6 +145,7 @@ import {
   buildWithdrawTransaction,
   buildDepositUnwrappedTransaction,
   buildWithdrawUnwrappedTransaction,
+  buildDepositWithRecordTransaction,
 } from '@/lib/vault-service';
 
 export default function AppPage() {
@@ -630,9 +631,10 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
         const mintPubkey = new PublicKey(mintAddress);
         transaction = await buildDepositTransaction(connection, ownerPubkey, mintPubkey);
       } else {
-        // For unwrapped domains, use the name account deposit
+        // For unwrapped domains, use deposit with SOL record update
+        // This automatically sets the SOL record to point to the vault PDA
         const nameAccountPubkey = new PublicKey(pubkey);
-        transaction = await buildDepositUnwrappedTransaction(connection, ownerPubkey, nameAccountPubkey);
+        transaction = await buildDepositWithRecordTransaction(connection, ownerPubkey, nameAccountPubkey);
       }
       
       transaction.feePayer = ownerPubkey;

@@ -13,6 +13,9 @@ export const VAULT_PROGRAM_ID = new PublicKey('LUMPd26Acz4wqS8EBuoxPN2zhwCUF4npb
 // SNS Name Service Program ID
 export const NAME_SERVICE_PROGRAM_ID = new PublicKey('namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX');
 
+// SNS Records V2 Program ID (correct mainnet address)
+export const SNS_RECORDS_PROGRAM_ID = new PublicKey('HP3D4D1ZCmohQGFVms2SS4LCANgJyksBf5s1F77FuFjZ');
+
 // Seed for vault PDA
 const VAULT_SEED = Buffer.from('vault');
 
@@ -45,6 +48,9 @@ const WITHDRAW_UNWRAPPED_DOMAIN_DISCRIMINATOR = Buffer.from([170, 189, 73, 129, 
 // Discriminator for init_vault_token_account (sha256("global:init_vault_token_account")[0..8])
 // Hex: a57a8af03703c554 -> [165, 122, 138, 240, 55, 3, 197, 84]
 const INIT_VAULT_TOKEN_ACCOUNT_DISCRIMINATOR = Buffer.from([165, 122, 138, 240, 55, 3, 197, 84]);
+// Discriminator for deposit_domain_with_record (sha256("global:deposit_domain_with_record")[0..8])
+// This instruction deposits domain AND sets the SOL record to the vault PDA
+const DEPOSIT_DOMAIN_WITH_RECORD_DISCRIMINATOR = Buffer.from([160, 246, 38, 202, 11, 144, 113, 240]);
 
 /**
  * Get the vault PDA for a user
@@ -53,6 +59,50 @@ export function getVaultPDA(owner: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [VAULT_SEED, owner.toBuffer()],
     VAULT_PROGRAM_ID
+  );
+}
+
+/**
+ * Get the SOL record V2 PDA for a domain name account
+ * Uses the same derivation as the SNS SDK:
+ * 1. recordName = 0x02 byte + "SOL" 
+ * 2. hashedName = sha256(HASH_PREFIX + recordName) where HASH_PREFIX = 'SPL Name Service'
+ * 3. PDA = findProgramAddressSync([hashedName, centralState, domainKey], NAME_PROGRAM_ID)
+ */
+export function getSolRecordV2PDA(domainNameAccount: PublicKey): [PublicKey, number] {
+  const crypto = require('crypto');
+  const HASH_PREFIX = 'SPL Name Service';
+  
+  // Record name with V2 prefix (0x02 byte prepended)
+  const recordNameWithPrefix = Buffer.from([0x02]).toString() + 'SOL';
+  
+  // Hash: sha256(HASH_PREFIX + recordNameWithPrefix)
+  const hashedName = crypto.createHash('sha256')
+    .update(Buffer.from(HASH_PREFIX + recordNameWithPrefix, 'utf8'))
+    .digest();
+  
+  // Get central state
+  const [centralState] = getSnsRecordsCentralState();
+  
+  // Derive using NAME_PROGRAM_ID (not SNS_RECORDS_PROGRAM_ID)
+  return PublicKey.findProgramAddressSync(
+    [
+      hashedName,
+      centralState.toBuffer(),
+      domainNameAccount.toBuffer(),
+    ],
+    NAME_SERVICE_PROGRAM_ID  // Important: Uses NAME_SERVICE_PROGRAM_ID, not SNS_RECORDS_PROGRAM_ID
+  );
+}
+
+/**
+ * Get the SNS Records V2 central state PDA
+ * Central state is derived using the program ID itself as seed
+ */
+export function getSnsRecordsCentralState(): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SNS_RECORDS_PROGRAM_ID.toBuffer()],
+    SNS_RECORDS_PROGRAM_ID
   );
 }
 
@@ -275,6 +325,46 @@ export function createDepositUnwrappedDomainInstruction(
 }
 
 /**
+ * Create deposit domain with record instruction
+ * This deposits the domain to the vault AND sets the SOL record to point to the vault PDA
+ * The record is also verified using ROA (Right of Association)
+ */
+export function createDepositDomainWithRecordInstruction(
+  owner: PublicKey,
+  nameAccount: PublicKey
+): TransactionInstruction {
+  const [vaultPDA] = getVaultPDA(owner);
+  const [solRecordV2] = getSolRecordV2PDA(nameAccount);
+  const [centralState] = getSnsRecordsCentralState();
+  
+  // Accounts must match the order in DepositDomainWithRecord struct:
+  // 1. owner (signer, writable)
+  // 2. vault (writable)
+  // 3. name_account (writable)
+  // 4. sol_record_v2 (writable)
+  // 5. central_state (readonly)
+  // 6. name_service_program (readonly)
+  // 7. sns_records_program (readonly)
+  // 8. system_program (readonly)
+  const keys = [
+    { pubkey: owner, isSigner: true, isWritable: true },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: nameAccount, isSigner: false, isWritable: true },
+    { pubkey: solRecordV2, isSigner: false, isWritable: true },
+    { pubkey: centralState, isSigner: false, isWritable: false },
+    { pubkey: NAME_SERVICE_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: SNS_RECORDS_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+  
+  return new TransactionInstruction({
+    keys,
+    programId: VAULT_PROGRAM_ID,
+    data: DEPOSIT_DOMAIN_WITH_RECORD_DISCRIMINATOR,
+  });
+}
+
+/**
  * Create withdraw unwrapped domain instruction
  */
 export function createWithdrawUnwrappedDomainInstruction(
@@ -317,6 +407,32 @@ export async function buildDepositUnwrappedTransaction(
   
   // Add deposit instruction
   const depositIx = createDepositUnwrappedDomainInstruction(owner, nameAccount);
+  transaction.add(depositIx);
+  
+  return transaction;
+}
+
+/**
+ * Build a complete deposit transaction for unwrapped domain WITH SOL record update
+ * This deposits the domain AND sets the SOL record to point to the vault PDA
+ * The SOL record is automatically verified (ROA signed) by the vault PDA
+ * Includes vault initialization if needed
+ */
+export async function buildDepositWithRecordTransaction(
+  connection: Connection,
+  owner: PublicKey,
+  nameAccount: PublicKey
+): Promise<Transaction> {
+  const transaction = new Transaction();
+  
+  // Check if vault exists, if not add initialization instruction
+  const hasVault = await vaultExists(connection, owner);
+  if (!hasVault) {
+    transaction.add(createInitializeVaultInstruction(owner));
+  }
+  
+  // Add deposit with record instruction
+  const depositIx = createDepositDomainWithRecordInstruction(owner, nameAccount);
   transaction.add(depositIx);
   
   return transaction;
