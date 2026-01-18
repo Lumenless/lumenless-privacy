@@ -135,12 +135,8 @@ function PayLinksView() {
       
       // Get UTXO pubkey - compute poseidon(privateKey)
       const utxoPrivateKey = encryptionService.getUtxoPrivateKeyV2();
-      console.log('DEBUG utxoPrivateKey:', utxoPrivateKey);
       const privkeyBN = BigInt(utxoPrivateKey);
-      console.log('DEBUG privkeyBN:', privkeyBN.toString());
       const utxoPubkey = lightWasm.poseidonHashString([privkeyBN.toString()]);
-      console.log('DEBUG utxoPubkey:', utxoPubkey);
-      console.log('DEBUG utxoPubkey type:', typeof utxoPubkey);
       
       // Get encryption public key using SDK's method
       const encryptionPublicKey = encryptionService.getPayLinkPublicKey();

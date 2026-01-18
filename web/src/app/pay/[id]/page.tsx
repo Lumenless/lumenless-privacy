@@ -179,12 +179,6 @@ function PayView() {
       
       setProgressMessage('Generating ZK proof (this may take a moment)...');
       
-      // Debug: log the utxoPubkey value
-      console.log('DEBUG payLinkData:', payLinkData);
-      console.log('DEBUG utxoPubkey:', payLinkData.utxoPubkey);
-      console.log('DEBUG utxoPubkey type:', typeof payLinkData.utxoPubkey);
-      console.log('DEBUG utxoPubkey length:', payLinkData.utxoPubkey?.length);
-      
       const result = await deposit({
         lightWasm,
         storage,
@@ -195,43 +189,23 @@ function PayView() {
         encryptionService,
         transactionSigner: async (tx: VersionedTransaction) => {
           setProgressMessage('Please sign the transaction...');
-          console.log('Requesting transaction signature for VersionedTransaction...');
           
-          try {
-            // Serialize the VersionedTransaction and pass as Uint8Array
-            // The @solana/connector signer has issues with VersionedTransaction objects
-            // but should handle Uint8Array correctly per its type definitions
-            const serialized = tx.serialize();
-            console.log('Serialized transaction length:', serialized.length);
-            
-            // Pass the serialized bytes to the signer
-            const signed = await signer.signTransaction(serialized);
-            console.log('Transaction signed, result type:', signed?.constructor?.name);
-            
-            // The result could be a Uint8Array, VersionedTransaction, or Transaction
-            if (signed instanceof VersionedTransaction) {
-              return signed;
-            }
-            
-            if (signed instanceof Uint8Array) {
-              // Deserialize back to VersionedTransaction
-              return VersionedTransaction.deserialize(signed);
-            }
-            
-            // If we get something with a serialize method, use that
-            if (signed && typeof signed === 'object' && 'serialize' in signed) {
-              const serializedSigned = (signed as { serialize(): Uint8Array }).serialize();
-              return VersionedTransaction.deserialize(serializedSigned);
-            }
-            
-            throw new Error(`Unexpected signed transaction type: ${typeof signed}`);
-          } catch (signError: unknown) {
-            console.error('Raw signing error:', signError);
-            if (signError && typeof signError === 'object') {
-              console.error('Error stringified:', JSON.stringify(signError, Object.getOwnPropertyNames(signError), 2));
-            }
-            throw signError;
+          // Serialize the VersionedTransaction and pass as Uint8Array
+          // The @solana/connector signer has issues with VersionedTransaction objects
+          const serialized = tx.serialize();
+          const signed = await signer.signTransaction(serialized);
+          
+          if (signed instanceof VersionedTransaction) {
+            return signed;
           }
+          if (signed instanceof Uint8Array) {
+            return VersionedTransaction.deserialize(signed);
+          }
+          if (signed && typeof signed === 'object' && 'serialize' in signed) {
+            const serializedSigned = (signed as { serialize(): Uint8Array }).serialize();
+            return VersionedTransaction.deserialize(serializedSigned);
+          }
+          throw new Error('Unexpected signed transaction type');
         },
         recipientUtxoPubkey: payLinkData.utxoPubkey,
         recipientEncryptionKey,
@@ -240,10 +214,6 @@ function PayView() {
       setSuccess({ tx: result.tx });
     } catch (err) {
       console.error('Payment error:', err);
-      // Log full error details
-      if (err && typeof err === 'object') {
-        console.error('Error details:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
-      }
       setError(err instanceof Error ? err.message : 'Payment failed. Please try again.');
     } finally {
       setIsProcessing(false);
