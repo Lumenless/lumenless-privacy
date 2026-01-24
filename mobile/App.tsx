@@ -1,12 +1,13 @@
+import 'react-native-get-random-values'; // Must be first for crypto polyfill
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
-import { TabNavigator } from './src/navigation';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import PayLinksScreen from './src/screens/PayLinksScreen';
 
 export default function App() {
   return (
-    <NavigationContainer>
+    <SafeAreaProvider>
       <StatusBar style="light" />
-      <TabNavigator />
-    </NavigationContainer>
+      <PayLinksScreen />
+    </SafeAreaProvider>
   );
 }
