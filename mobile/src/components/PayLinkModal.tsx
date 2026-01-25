@@ -1,7 +1,8 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, Animated } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRef, useEffect, useState } from 'react';
 import { getPayLinkUrl } from '../services/paylink';
+import { colors, spacing, radius, typography } from '../theme';
 
 interface PayLinkModalProps {
   visible: boolean;
@@ -11,39 +12,26 @@ interface PayLinkModalProps {
 
 export default function PayLinkModal({ visible, publicKey, onClose }: PayLinkModalProps) {
   const [copied, setCopied] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const fade = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.92)).current;
 
   useEffect(() => {
     if (visible) {
       setCopied(false);
       Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 8,
-          tension: 100,
-          useNativeDriver: true,
-        }),
+        Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, friction: 10, tension: 90, useNativeDriver: true }),
       ]).start();
     } else {
-      fadeAnim.setValue(0);
-      scaleAnim.setValue(0.9);
+      fade.setValue(0);
+      scale.setValue(0.92);
     }
   }, [visible]);
 
   const handleCopy = async () => {
     if (!publicKey) return;
-    
-    const url = getPayLinkUrl(publicKey);
-    await Clipboard.setStringAsync(url);
+    await Clipboard.setStringAsync(getPayLinkUrl(publicKey));
     setCopied(true);
-    
-    // Reset after 2 seconds
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -52,68 +40,55 @@ export default function PayLinkModal({ visible, publicKey, onClose }: PayLinkMod
   const payUrl = getPayLinkUrl(publicKey);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <Animated.View
-          style={[
-            styles.backdrop,
-            { opacity: fadeAnim },
-          ]}
-        >
-          <TouchableOpacity style={styles.backdropTouch} onPress={onClose} />
+        <Animated.View style={[styles.backdrop, { opacity: fade }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         </Animated.View>
 
         <Animated.View
           style={[
-            styles.modal,
+            styles.sheet,
             {
-              opacity: fadeAnim,
-              transform: [{ scale: scaleAnim }],
+              opacity: fade,
+              transform: [{ scale }],
             },
           ]}
         >
-          {/* Success Icon */}
-          <View style={styles.iconContainer}>
-            <Text style={styles.icon}>✓</Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>✓</Text>
           </View>
 
-          <Text style={styles.title}>Pay Link Created!</Text>
-          
-          <Text style={styles.description}>
+          <Text style={styles.title}>Link created</Text>
+          <Text style={styles.desc}>
             Share this link with the payer. Once they pay, you'll receive it in your PrivacyCash balance.
           </Text>
 
-          {/* URL Display */}
-          <View style={styles.urlContainer}>
-            <Text style={styles.urlText} numberOfLines={2}>
+          <View style={styles.urlWrap}>
+            <Text style={styles.url} numberOfLines={2} selectable>
               {payUrl}
             </Text>
           </View>
 
-          {/* Copy Button */}
-          <TouchableOpacity
-            style={[styles.copyButton, copied && styles.copyButtonSuccess]}
+          <Pressable
+            style={({ pressed }) => [
+              styles.copyBtn,
+              copied && styles.copyBtnDone,
+              pressed && styles.copyBtnPressed,
+            ]}
             onPress={handleCopy}
-            activeOpacity={0.8}
           >
-            <Text style={styles.copyButtonText}>
-              {copied ? '✓ Copied!' : 'Copy Link'}
+            <Text style={styles.copyBtnLabel}>
+              {copied ? 'Copied to clipboard' : 'Copy link'}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
 
-          {/* Close Button */}
-          <TouchableOpacity
-            style={styles.closeButton}
+          <Pressable
+            style={({ pressed }) => [styles.doneBtn, pressed && styles.doneBtnPressed]}
             onPress={onClose}
-            activeOpacity={0.7}
           >
-            <Text style={styles.closeButtonText}>Done</Text>
-          </TouchableOpacity>
+            <Text style={styles.doneBtnLabel}>Done</Text>
+          </Pressable>
         </Animated.View>
       </View>
     </Modal>
@@ -125,93 +100,99 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: spacing.xl,
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: colors.overlay,
   },
-  backdropTouch: {
-    flex: 1,
-  },
-  modal: {
+  sheet: {
     width: '100%',
-    backgroundColor: '#111',
-    borderRadius: 24,
-    padding: 28,
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.xl,
+    padding: spacing.xxl,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(128, 0, 255, 0.3)',
-    shadowColor: '#8000FF',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    elevation: 10,
+    borderColor: colors.borderLight,
   },
-  iconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(0, 230, 118, 0.15)',
+  badge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.successDim,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: spacing.xl,
   },
-  icon: {
-    fontSize: 32,
-    color: '#00E676',
+  badgeText: {
+    fontSize: 24,
+    color: colors.success,
+    fontWeight: '600',
   },
   title: {
+    ...typography.title,
     fontSize: 22,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 12,
+    color: colors.text,
+    marginBottom: spacing.sm,
   },
-  description: {
+  desc: {
+    ...typography.body,
     fontSize: 14,
-    color: '#888',
+    color: colors.textMuted,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
+    lineHeight: 21,
+    marginBottom: spacing.xl,
   },
-  urlContainer: {
+  urlWrap: {
     width: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.border,
   },
-  urlText: {
+  url: {
+    ...typography.mono,
     fontSize: 13,
-    color: '#8000FF',
+    color: colors.accent,
     textAlign: 'center',
-    fontFamily: 'monospace',
   },
-  copyButton: {
+  copyBtn: {
     width: '100%',
-    backgroundColor: '#8000FF',
+    backgroundColor: colors.accent,
     paddingVertical: 16,
-    borderRadius: 14,
+    borderRadius: radius.md,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: spacing.md,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  copyButtonSuccess: {
-    backgroundColor: '#00E676',
+  copyBtnDone: {
+    backgroundColor: colors.success,
+    shadowColor: colors.success,
   },
-  copyButtonText: {
+  copyBtnPressed: {
+    opacity: 0.9,
+  },
+  copyBtnLabel: {
+    ...typography.button,
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  closeButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  closeButtonText: {
-    color: '#666',
     fontSize: 15,
-    fontWeight: '600',
+  },
+  doneBtn: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+  },
+  doneBtnPressed: {
+    opacity: 0.7,
+  },
+  doneBtnLabel: {
+    ...typography.subtitle,
+    fontSize: 15,
+    color: colors.textMuted,
   },
 });
