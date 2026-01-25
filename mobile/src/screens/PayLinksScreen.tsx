@@ -5,6 +5,7 @@ import {
   FlatList,
   ActivityIndicator,
   Pressable,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useEffect, useCallback } from 'react';
@@ -31,6 +32,7 @@ export default function PayLinksScreen() {
   const [successModalVisible, setSuccessModalVisible] = useState(false);
   const [newLinkPublicKey, setNewLinkPublicKey] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadPayLinks = useCallback(async () => {
     setLoading(true);
@@ -63,7 +65,18 @@ export default function PayLinksScreen() {
     }, [loadPayLinks])
   );
 
-  const balances = usePayLinkBalances(payLinks);
+  const { balances, refresh: refreshBalances } = usePayLinkBalances(payLinks);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Refresh both pay links and balances
+      await loadPayLinks();
+      await refreshBalances();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadPayLinks, refreshBalances]);
 
   const handleOpenCreateModal = () => setCreateModalVisible(true);
 
@@ -241,6 +254,14 @@ export default function PayLinksScreen() {
           }
           contentContainerStyle={[styles.list, payLinks.length === 0 && styles.listEmpty]}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.accent}
+              colors={[colors.accent]}
+            />
+          }
         />
       )}
 

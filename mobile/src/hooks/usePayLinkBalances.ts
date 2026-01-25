@@ -23,9 +23,28 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
   const [balances, setBalances] = useState<BalanceMap>({});
   const loadingRef = useRef<Record<string, boolean>>({});
 
-  const fetchBalances = useCallback(async (links: PayLink[]) => {
+  // Function to clear cache for a specific address or all addresses
+  const clearCache = useCallback((publicKey?: string) => {
+    if (publicKey) {
+      delete balanceCache[publicKey];
+    } else {
+      // Clear all cache
+      Object.keys(balanceCache).forEach(key => {
+        delete balanceCache[key];
+      });
+    }
+  }, []);
+
+  const fetchBalances = useCallback(async (links: PayLink[], forceRefresh = false) => {
+    // If force refresh, clear cache for all links
+    if (forceRefresh) {
+      links.forEach(link => {
+        delete balanceCache[link.publicKey];
+      });
+    }
+
     const toFetch = links.filter(
-      (link) => !isCacheValid(link.publicKey) && !loadingRef.current[link.publicKey]
+      (link) => (!isCacheValid(link.publicKey) || forceRefresh) && !loadingRef.current[link.publicKey]
     );
 
     if (toFetch.length === 0) {
@@ -95,5 +114,10 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
     return () => clearInterval(interval);
   }, [payLinks, fetchBalances]);
 
-  return balances;
+  // Return balances and refresh function
+  return {
+    balances,
+    refresh: () => fetchBalances(payLinks, true),
+    clearCache,
+  };
 }

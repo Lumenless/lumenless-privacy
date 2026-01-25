@@ -27,18 +27,30 @@ function generateKeypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
 
 export async function getPayLinks(): Promise<PayLink[]> {
   try {
+    console.log('[PayLink] Fetching pay links from secure store...');
     const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
-    if (!data) return [];
+    
+    if (!data) {
+      console.log('[PayLink] No pay links found in secure store');
+      return [];
+    }
 
+    console.log('[PayLink] Found data in secure store, length:', data.length);
     const stored: StoredPayLink[] = JSON.parse(data);
-    return stored.map(({ secretKey, ...link }) => link);
-  } catch (error) {
-    console.error('Error getting pay links:', error);
+    console.log('[PayLink] Parsed', stored.length, 'pay link(s)');
+    
+    const links = stored.map(({ secretKey, ...link }) => link);
+    return links;
+  } catch (error: any) {
+    console.error('[PayLink] Error getting pay links:', error?.message || error);
+    console.error('[PayLink] Error stack:', error?.stack);
     return [];
   }
 }
 
 export async function createPayLink(label?: string): Promise<PayLink> {
+  console.log('[PayLink] Creating new pay link with label:', label || '(none)');
+  
   const { publicKey, secretKey } = generateKeypair();
 
   const publicKeyBase58 = bs58.encode(publicKey);
@@ -52,13 +64,26 @@ export async function createPayLink(label?: string): Promise<PayLink> {
     label,
   };
 
-  const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
-  const existing: StoredPayLink[] = data ? JSON.parse(data) : [];
-  existing.push(newLink);
-  await SecureStore.setItemAsync(PAYLINKS_KEY, JSON.stringify(existing));
+  try {
+    const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
+    const existing: StoredPayLink[] = data ? JSON.parse(data) : [];
+    console.log('[PayLink] Existing pay links count:', existing.length);
+    
+    existing.push(newLink);
+    
+    const jsonData = JSON.stringify(existing);
+    console.log('[PayLink] Saving', existing.length, 'pay link(s) to secure store, data length:', jsonData.length);
+    
+    await SecureStore.setItemAsync(PAYLINKS_KEY, jsonData);
+    console.log('[PayLink] Successfully saved pay link to secure store');
 
-  const { secretKey: _, ...payLink } = newLink;
-  return payLink;
+    const { secretKey: _, ...payLink } = newLink;
+    return payLink;
+  } catch (error: any) {
+    console.error('[PayLink] Error creating pay link:', error?.message || error);
+    console.error('[PayLink] Error stack:', error?.stack);
+    throw error;
+  }
 }
 
 export async function getPayLinkSecretKey(id: string): Promise<string | null> {
