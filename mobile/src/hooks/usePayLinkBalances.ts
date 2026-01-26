@@ -22,6 +22,7 @@ function isCacheValid(publicKey: string): boolean {
 export function usePayLinkBalances(payLinks: PayLink[]) {
   const [balances, setBalances] = useState<BalanceMap>({});
   const loadingRef = useRef<Record<string, boolean>>({});
+  const previousLinksRef = useRef<Set<string>>(new Set());
 
   // Function to clear cache for a specific address or all addresses
   const clearCache = useCallback((publicKey?: string) => {
@@ -35,7 +36,7 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
     }
   }, []);
 
-  const fetchBalances = useCallback(async (links: PayLink[], forceRefresh = false) => {
+  const fetchBalances = useCallback(async (links: PayLink[], forceRefresh = false, onlyNewLinks = false) => {
     // If force refresh, clear cache for all links
     if (forceRefresh) {
       links.forEach(link => {
@@ -43,17 +44,27 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
       });
     }
 
-    const toFetch = links.filter(
+    // If onlyNewLinks is true, only fetch links that weren't in the previous list
+    let linksToConsider = links;
+    if (onlyNewLinks) {
+      const currentPublicKeys = new Set(links.map(link => link.publicKey));
+      linksToConsider = links.filter(link => !previousLinksRef.current.has(link.publicKey));
+      console.log(`[usePayLinkBalances] Only fetching ${linksToConsider.length} newly added link(s)`);
+    }
+
+    const toFetch = linksToConsider.filter(
       (link) => (!isCacheValid(link.publicKey) || forceRefresh) && !loadingRef.current[link.publicKey]
     );
 
     if (toFetch.length === 0) {
-      // Use cached values
+      // Use cached values for all links
       const cached: BalanceMap = {};
       links.forEach((link) => {
         const cachedData = balanceCache[link.publicKey];
         cached[link.publicKey] = cachedData?.balances || null;
-        console.log(`[usePayLinkBalances] Using cached balance for ${link.publicKey}:`, cachedData?.balances);
+        if (cachedData) {
+          console.log(`[usePayLinkBalances] Using cached balance for ${link.publicKey}:`, cachedData.balances);
+        }
       });
       setBalances(cached);
       return;
@@ -87,11 +98,21 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
       })
     );
 
-    // Update state
+    // Update state with all links (including cached ones)
     setBalances((prev) => {
       const next = { ...prev };
+      // Add newly fetched results
       results.forEach(({ publicKey, balances }) => {
         next[publicKey] = balances;
+      });
+      // Add cached values for links that weren't fetched
+      links.forEach((link) => {
+        if (!results.find(r => r.publicKey === link.publicKey)) {
+          const cachedData = balanceCache[link.publicKey];
+          if (cachedData) {
+            next[link.publicKey] = cachedData.balances;
+          }
+        }
       });
       return next;
     });
@@ -99,7 +120,21 @@ export function usePayLinkBalances(payLinks: PayLink[]) {
 
   useEffect(() => {
     if (payLinks.length > 0) {
-      fetchBalances(payLinks);
+      // Check if this is a new set of links (e.g., showing hidden links)
+      const currentPublicKeys = new Set(payLinks.map(link => link.publicKey));
+      const previousPublicKeys = previousLinksRef.current;
+      
+      // Determine if we're adding new links (e.g., showing hidden)
+      const hasNewLinks = Array.from(currentPublicKeys).some(key => !previousPublicKeys.has(key));
+      const hasRemovedLinks = Array.from(previousPublicKeys).some(key => !currentPublicKeys.has(key));
+      
+      // If we have new links, only fetch those. Otherwise, fetch all that need it.
+      const onlyNewLinks = hasNewLinks && !hasRemovedLinks;
+      
+      fetchBalances(payLinks, false, onlyNewLinks);
+      
+      // Update previous links reference
+      previousLinksRef.current = currentPublicKeys;
     }
   }, [payLinks, fetchBalances]);
 

@@ -12,6 +12,7 @@ export interface PayLink {
   publicKey: string;
   createdAt: number;
   label?: string;
+  hidden?: boolean;
 }
 
 interface StoredPayLink extends PayLink {
@@ -25,7 +26,7 @@ function generateKeypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
   return { publicKey: kp.publicKey, secretKey: kp.secretKey };
 }
 
-export async function getPayLinks(): Promise<PayLink[]> {
+export async function getPayLinks(includeHidden = false): Promise<PayLink[]> {
   try {
     console.log('[PayLink] Fetching pay links from secure store...');
     const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
@@ -39,12 +40,30 @@ export async function getPayLinks(): Promise<PayLink[]> {
     const stored: StoredPayLink[] = JSON.parse(data);
     console.log('[PayLink] Parsed', stored.length, 'pay link(s)');
     
-    const links = stored.map(({ secretKey, ...link }) => link);
+    const links = stored
+      .map(({ secretKey, ...link }) => link)
+      .filter(link => includeHidden || !link.hidden);
+    
+    console.log('[PayLink] Returning', links.length, 'pay link(s)' + (includeHidden ? ' (including hidden)' : ' (excluding hidden)'));
     return links;
   } catch (error: any) {
     console.error('[PayLink] Error getting pay links:', error?.message || error);
     console.error('[PayLink] Error stack:', error?.stack);
     return [];
+  }
+}
+
+// Get count of hidden pay links
+export async function getHiddenPayLinksCount(): Promise<number> {
+  try {
+    const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
+    if (!data) return 0;
+
+    const stored: StoredPayLink[] = JSON.parse(data);
+    return stored.filter(link => link.hidden).length;
+  } catch (error) {
+    console.error('Error getting hidden pay links count:', error);
+    return 0;
   }
 }
 
@@ -102,15 +121,41 @@ export async function getPayLinkSecretKey(id: string): Promise<string | null> {
 
 export async function deletePayLink(id: string): Promise<boolean> {
   try {
+    console.log('[PayLink] Hiding pay link:', id);
     const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
     if (!data) return false;
 
     const stored: StoredPayLink[] = JSON.parse(data);
-    const filtered = stored.filter((l) => l.id !== id);
-    await SecureStore.setItemAsync(PAYLINKS_KEY, JSON.stringify(filtered));
+    const updated = stored.map((link) => 
+      link.id === id ? { ...link, hidden: true } : link
+    );
+    
+    await SecureStore.setItemAsync(PAYLINKS_KEY, JSON.stringify(updated));
+    console.log('[PayLink] Successfully hid pay link');
     return true;
   } catch (error) {
-    console.error('Error deleting pay link:', error);
+    console.error('[PayLink] Error hiding pay link:', error);
+    return false;
+  }
+}
+
+// Restore/unhide a pay link
+export async function restorePayLink(id: string): Promise<boolean> {
+  try {
+    console.log('[PayLink] Restoring pay link:', id);
+    const data = await SecureStore.getItemAsync(PAYLINKS_KEY);
+    if (!data) return false;
+
+    const stored: StoredPayLink[] = JSON.parse(data);
+    const updated = stored.map((link) => 
+      link.id === id ? { ...link, hidden: false } : link
+    );
+    
+    await SecureStore.setItemAsync(PAYLINKS_KEY, JSON.stringify(updated));
+    console.log('[PayLink] Successfully restored pay link');
+    return true;
+  } catch (error) {
+    console.error('[PayLink] Error restoring pay link:', error);
     return false;
   }
 }

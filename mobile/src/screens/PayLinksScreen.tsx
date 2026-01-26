@@ -12,13 +12,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { PayLinkModal, CreatePayLinkModal } from '../components';
-import { createPayLink, getPayLinks, getPayLinkUrl, PayLink } from '../services/paylink';
+import { createPayLink, getPayLinks, getPayLinkUrl, getHiddenPayLinksCount, PayLink } from '../services/paylink';
 import { usePayLinkBalances } from '../hooks/usePayLinkBalances';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { testNetworkConnectivity, testRpcEndpoint } from '../services/balances';
-import { SOLANA_RPC_URL, FALLBACK_RPC_URL } from '../constants/solana';
+import { testNetworkConnectivity } from '../services/balances';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
@@ -33,13 +32,20 @@ export default function PayLinksScreen() {
   const [newLinkPublicKey, setNewLinkPublicKey] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [showingHidden, setShowingHidden] = useState(false);
 
   const loadPayLinks = useCallback(async () => {
     setLoading(true);
-    const links = await getPayLinks();
+    const links = await getPayLinks(showingHidden);
     setPayLinks(links);
+    
+    // Get hidden count
+    const count = await getHiddenPayLinksCount();
+    setHiddenCount(count);
+    
     setLoading(false);
-  }, []);
+  }, [showingHidden]);
 
   useFocusEffect(
     useCallback(() => {
@@ -53,17 +59,14 @@ export default function PayLinksScreen() {
             console.warn('[PayLinksScreen] ⚠️ Network connectivity test failed! Check Android emulator network settings.');
           }
         });
-        
-        testRpcEndpoint(SOLANA_RPC_URL).then((ok) => {
-          console.log(`[PayLinksScreen] Primary RPC endpoint: ${ok ? 'OK' : 'FAILED'}`);
-        });
-        
-        testRpcEndpoint(FALLBACK_RPC_URL).then((ok) => {
-          console.log(`[PayLinksScreen] Fallback RPC endpoint: ${ok ? 'OK' : 'FAILED'}`);
-        });
       }
     }, [loadPayLinks])
   );
+
+  // Reload links when showingHidden changes
+  useEffect(() => {
+    loadPayLinks();
+  }, [showingHidden, loadPayLinks]);
 
   const { balances, refresh: refreshBalances } = usePayLinkBalances(payLinks);
 
@@ -77,6 +80,11 @@ export default function PayLinksScreen() {
       setRefreshing(false);
     }
   }, [loadPayLinks, refreshBalances]);
+
+  const handleToggleHidden = useCallback(async () => {
+    setShowingHidden(!showingHidden);
+    // loadPayLinks will be called automatically via useEffect dependency
+  }, [showingHidden]);
 
   const handleOpenCreateModal = () => setCreateModalVisible(true);
 
@@ -233,6 +241,32 @@ export default function PayLinksScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Lumenless</Text>
         <Text style={styles.subtitle}>Receive payments privately</Text>
+        {hiddenCount > 0 && !showingHidden && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.showHiddenBtn,
+              pressed && styles.showHiddenBtnPressed,
+            ]}
+            onPress={handleToggleHidden}
+          >
+            <Text style={styles.showHiddenBtnText}>
+              Show hidden ({hiddenCount})
+            </Text>
+          </Pressable>
+        )}
+        {showingHidden && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.showHiddenBtn,
+              pressed && styles.showHiddenBtnPressed,
+            ]}
+            onPress={handleToggleHidden}
+          >
+            <Text style={styles.showHiddenBtnText}>
+              Hide hidden
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {loading ? (
@@ -298,6 +332,25 @@ const styles = StyleSheet.create({
     ...typography.subtitle,
     color: colors.textMuted,
     marginTop: spacing.xs,
+  },
+  showHiddenBtn: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentDim,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    alignSelf: 'flex-start',
+  },
+  showHiddenBtnPressed: {
+    opacity: 0.7,
+  },
+  showHiddenBtnText: {
+    ...typography.caption,
+    fontSize: 13,
+    color: colors.accent,
+    fontWeight: '600',
   },
   loading: {
     flex: 1,

@@ -312,49 +312,6 @@ export async function testNetworkConnectivity(): Promise<boolean> {
   }
 }
 
-// Test RPC endpoint connectivity
-export async function testRpcEndpoint(url: string): Promise<boolean> {
-  try {
-    console.log(`[RPC Test] Testing RPC endpoint: ${url}`);
-    
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
-    
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getHealth',
-        }),
-        signal: controller?.signal,
-      });
-      
-      if (timeoutId) clearTimeout(timeoutId);
-      
-      const text = await response.text();
-      console.log(`[RPC Test] Response status: ${response.status}, body: ${text.substring(0, 100)}`);
-      return response.ok;
-    } catch (fetchError: any) {
-      if (timeoutId) clearTimeout(timeoutId);
-      throw fetchError;
-    }
-  } catch (error: any) {
-    console.error(`[RPC Test] Failed to connect to ${url}:`, error?.message || error);
-    console.error(`[RPC Test] Error details:`, {
-      name: error?.name,
-      message: error?.message,
-      stack: error?.stack,
-    });
-    return false;
-  }
-}
-
 // Test function to verify RPC is working
 export async function testRpcConnection(): Promise<boolean> {
   try {
@@ -362,15 +319,6 @@ export async function testRpcConnection(): Promise<boolean> {
     const networkOk = await testNetworkConnectivity();
     if (!networkOk) {
       console.error('[testRpcConnection] Basic network connectivity failed - check Android emulator network settings');
-      return false;
-    }
-    
-    // Test RPC endpoints
-    const primaryOk = await testRpcEndpoint(SOLANA_RPC_URL);
-    const fallbackOk = await testRpcEndpoint(FALLBACK_RPC_URL);
-    
-    if (!primaryOk && !fallbackOk) {
-      console.error('[testRpcConnection] Both RPC endpoints failed');
       return false;
     }
     
