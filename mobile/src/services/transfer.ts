@@ -13,12 +13,17 @@ import {
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
   TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { SOLANA_RPC_URL } from '../constants/solana';
 import { TokenAccount } from './tokens';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+// Rent-exempt minimum for token accounts (in lamports)
+// This is the amount required to create an ATA
+const TOKEN_ACCOUNT_RENT = 2_039_280n; // ~0.00203928 SOL
 
 // Validate Solana wallet address
 export function isValidSolanaAddress(addressStr: string): boolean {
@@ -75,6 +80,7 @@ export async function claimAllTokens(
     // Create transaction
     const transaction = new Transaction();
     const processedTokens: string[] = [];
+    let ataCreationCount = 0;
     
     // Build SPL token transfer instructions first
     for (const token of splTokens) {
@@ -115,6 +121,8 @@ export async function claimAllTokens(
               mintPubkey         // mint
             )
           );
+          ataCreationCount++;
+          console.log(`[Transfer] Will create ATA for ${token.symbol || token.mint} (rent: ${Number(TOKEN_ACCOUNT_RENT) / 1e9} SOL)`);
         }
         
         // Add transfer instruction
@@ -135,18 +143,35 @@ export async function claimAllTokens(
       }
     }
     
+    // Calculate total rent needed for ATA creations
+    const totalAtaRent = BigInt(ataCreationCount) * TOKEN_ACCOUNT_RENT;
+    console.log(`[Transfer] Total ATA creation rent needed: ${ataCreationCount} ATAs × ${Number(TOKEN_ACCOUNT_RENT) / 1e9} SOL = ${Number(totalAtaRent) / 1e9} SOL`);
+    
     // Build SOL transfer instruction last
     if (solToken) {
       try {
         console.log(`[Transfer] Building SOL transfer instruction`);
-        const lamports = BigInt(Math.floor(solToken.amount * 1e9));
+        const availableLamports = BigInt(Math.floor(solToken.amount * 1e9));
         
         // Transaction fee is ~5000 lamports per signature
-        // Transfer all SOL minus fee so account closes (balance = 0)
+        // We need to account for:
+        // 1. Transaction fee (~5000 lamports)
+        // 2. Rent for ATA creations (if any)
+        // 3. Transfer the remaining SOL
         const txFee = BigInt(5000);
-        const transferAmount = lamports > txFee ? lamports - txFee : BigInt(0);
+        const totalRequired = txFee + totalAtaRent;
         
-        if (transferAmount > BigInt(0)) {
+        console.log(`[Transfer] Available SOL: ${Number(availableLamports) / 1e9} SOL`);
+        console.log(`[Transfer] Required for fees + rent: ${Number(totalRequired) / 1e9} SOL`);
+        
+        if (availableLamports <= totalRequired) {
+          console.log(`[Transfer] Skipping SOL - balance too low (need ${Number(totalRequired) / 1e9} SOL, have ${Number(availableLamports) / 1e9} SOL)`);
+          result.failedTransfers++;
+          result.errors.push(`SOL: Balance too low. Need ${Number(totalRequired) / 1e9} SOL for fees and rent, have ${Number(availableLamports) / 1e9} SOL`);
+        } else {
+          // Transfer remaining SOL after fees and rent
+          const transferAmount = availableLamports - totalRequired;
+          
           transaction.add(
             SystemProgram.transfer({
               fromPubkey: keypair.publicKey,
@@ -155,11 +180,7 @@ export async function claimAllTokens(
             })
           );
           processedTokens.push('SOL');
-          console.log(`[Transfer] SOL transfer: ${Number(transferAmount) / 1e9} SOL`);
-        } else {
-          console.log(`[Transfer] Skipping SOL - balance too low for fee`);
-          result.failedTransfers++;
-          result.errors.push('SOL: Balance too low to cover transaction fee');
+          console.log(`[Transfer] SOL transfer: ${Number(transferAmount) / 1e9} SOL (${Number(availableLamports) / 1e9} - ${Number(totalRequired) / 1e9})`);
         }
       } catch (error: any) {
         console.error(`[Transfer] Error building SOL instruction:`, error);
