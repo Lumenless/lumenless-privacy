@@ -207,6 +207,11 @@ export default function PayLinkDetailsScreen() {
     const fullName = getTokenFullName(item);
     const isSol = item.mint === 'So11111111111111111111111111111111111111112';
 
+    // Debug: Log logoURI if present
+    if (item.logoURI) {
+      console.log(`[PayLinkDetails] Rendering token ${item.symbol || item.mint} with logoURI: ${item.logoURI}`);
+    }
+
     return (
       <View style={styles.tokenRow}>
         <View style={styles.tokenInfo}>
@@ -215,6 +220,12 @@ export default function PayLinkDetailsScreen() {
               source={{ uri: item.logoURI }}
               style={styles.tokenIcon}
               resizeMode="cover"
+              onLoad={() => {
+                console.log(`[PayLinkDetails] Image loaded successfully for ${item.symbol || item.mint}: ${item.logoURI}`);
+              }}
+              onError={(error) => {
+                console.error(`[PayLinkDetails] Image load error for ${item.symbol || item.mint}:`, error.nativeEvent?.error || 'Unknown error', `URL: ${item.logoURI}`);
+              }}
             />
           ) : (
             <View style={[styles.tokenIconPlaceholder, isSol && styles.tokenIconPlaceholderSol]}>

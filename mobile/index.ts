@@ -1,4 +1,6 @@
-// Polyfills must be imported first
+// Polyfills must be imported first - react-native-get-random-values before @solana/web3.js
+import 'react-native-get-random-values';
+import 'react-native-url-polyfill/auto'; // Required for Metaplex SDK
 import './src/polyfills';
 
 import { registerRootComponent } from 'expo';
