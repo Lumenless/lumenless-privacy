@@ -12,6 +12,7 @@ import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
+  createCloseAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
@@ -81,6 +82,7 @@ export async function claimAllTokens(
     const transaction = new Transaction();
     const processedTokens: string[] = [];
     let ataCreationCount = 0;
+    const sourceAtasToClose: { account: PublicKey; tokenSymbol: string }[] = [];
     
     // Build SPL token transfer instructions first
     for (const token of splTokens) {
@@ -107,6 +109,13 @@ export async function claimAllTokens(
           mintPubkey,
           destination
         );
+        
+        // Check if source ATA exists and has balance
+        const sourceAtaInfo = await connection.getAccountInfo(sourceAta);
+        if (!sourceAtaInfo) {
+          console.log(`[Transfer] Source ATA does not exist for ${token.symbol || token.mint}, skipping`);
+          continue;
+        }
         
         // Check if destination ATA exists
         const destAtaInfo = await connection.getAccountInfo(destAta);
@@ -135,6 +144,12 @@ export async function claimAllTokens(
           )
         );
         
+        // Track source ATA to close after transfer
+        sourceAtasToClose.push({
+          account: sourceAta,
+          tokenSymbol: token.symbol || token.mint,
+        });
+        
         processedTokens.push(token.symbol || token.mint);
       } catch (error: any) {
         console.error(`[Transfer] Error building instructions for ${token.symbol || token.mint}:`, error);
@@ -143,9 +158,34 @@ export async function claimAllTokens(
       }
     }
     
+    // Close source token accounts after transfers (rent goes to destination)
+    for (const { account, tokenSymbol } of sourceAtasToClose) {
+      try {
+        transaction.add(
+          createCloseAccountInstruction(
+            account,            // account to close
+            destination,       // destination for rent (goes to destination wallet)
+            keypair.publicKey, // owner/authority
+            []                 // multisig signers (empty for single signer)
+          )
+        );
+        console.log(`[Transfer] Will close source ATA for ${tokenSymbol} (rent ${Number(TOKEN_ACCOUNT_RENT) / 1e9} SOL → destination)`);
+      } catch (error: any) {
+        console.error(`[Transfer] Error building close instruction for ${tokenSymbol}:`, error);
+        // Don't fail the whole transaction if closing fails, but log it
+        result.errors.push(`${tokenSymbol} (close): ${error?.message || 'Failed to build close instruction'}`);
+      }
+    }
+    
     // Calculate total rent needed for ATA creations
     const totalAtaRent = BigInt(ataCreationCount) * TOKEN_ACCOUNT_RENT;
     console.log(`[Transfer] Total ATA creation rent needed: ${ataCreationCount} ATAs × ${Number(TOKEN_ACCOUNT_RENT) / 1e9} SOL = ${Number(totalAtaRent) / 1e9} SOL`);
+    
+    // Calculate rent we'll get back from closing accounts (goes to destination)
+    const rentFromClosing = BigInt(sourceAtasToClose.length) * TOKEN_ACCOUNT_RENT;
+    if (rentFromClosing > 0) {
+      console.log(`[Transfer] Will reclaim ${sourceAtasToClose.length} × ${Number(TOKEN_ACCOUNT_RENT) / 1e9} SOL = ${Number(rentFromClosing) / 1e9} SOL from closing accounts (→ destination)`);
+    }
     
     // Build SOL transfer instruction last
     if (solToken) {
@@ -158,11 +198,15 @@ export async function claimAllTokens(
         // 1. Transaction fee (~5000 lamports)
         // 2. Rent for ATA creations (if any)
         // 3. Transfer the remaining SOL
+        // Note: Rent from closing accounts goes directly to destination, not back to source
         const txFee = BigInt(5000);
         const totalRequired = txFee + totalAtaRent;
         
         console.log(`[Transfer] Available SOL: ${Number(availableLamports) / 1e9} SOL`);
         console.log(`[Transfer] Required for fees + rent: ${Number(totalRequired) / 1e9} SOL`);
+        if (rentFromClosing > 0) {
+          console.log(`[Transfer] Note: ${Number(rentFromClosing) / 1e9} SOL will be reclaimed from closed accounts and sent to destination`);
+        }
         
         if (availableLamports <= totalRequired) {
           console.log(`[Transfer] Skipping SOL - balance too low (need ${Number(totalRequired) / 1e9} SOL, have ${Number(availableLamports) / 1e9} SOL)`);
