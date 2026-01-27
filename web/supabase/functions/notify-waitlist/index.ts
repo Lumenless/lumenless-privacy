@@ -1,7 +1,15 @@
 // Supabase Edge Function to send Telegram notifications when someone joins the waitlist
 // Deploy with: supabase functions deploy notify-waitlist
 
+// @ts-ignore: Deno imports work in Supabase Edge Functions runtime
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+
+// Deno type declaration for Edge Functions
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+};
 
 const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN');
 const TELEGRAM_CHAT_ID = Deno.env.get('TELEGRAM_CHAT_ID');

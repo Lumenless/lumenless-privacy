@@ -8,13 +8,17 @@ import {
   ScrollView,
   Image,
   RefreshControl,
+  Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { getTokenAccounts, TokenAccount } from '../services/tokens';
-import { deletePayLink, PayLink, getPayLinkUrl } from '../services/paylink';
+import { deletePayLink, PayLink, getPayLinkUrl, getPayLinkSecretKey } from '../services/paylink';
+import { isValidSolanaAddress, claimAllTokens, ClaimResult } from '../services/transfer';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -34,6 +38,12 @@ export default function PayLinkDetailsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hiding, setHiding] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  
+  // Claim publicly modal state
+  const [claimModalVisible, setClaimModalVisible] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletError, setWalletError] = useState('');
+  const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
     loadTokens();
@@ -77,6 +87,93 @@ export default function PayLinkDetailsScreen() {
     await Clipboard.setStringAsync(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleOpenClaimModal = () => {
+    setWalletAddress('');
+    setWalletError('');
+    setClaimModalVisible(true);
+  };
+
+  const handleCloseClaimModal = () => {
+    if (!claiming) {
+      setClaimModalVisible(false);
+      setWalletAddress('');
+      setWalletError('');
+    }
+  };
+
+  const validateWalletAddress = (address: string): boolean => {
+    if (!address.trim()) {
+      setWalletError('Please enter a wallet address');
+      return false;
+    }
+    
+    if (!isValidSolanaAddress(address.trim())) {
+      setWalletError('Invalid Solana wallet address');
+      return false;
+    }
+    
+    setWalletError('');
+    return true;
+  };
+
+  const handleClaimPublicly = async () => {
+    const trimmedAddress = walletAddress.trim();
+    
+    if (!validateWalletAddress(trimmedAddress)) {
+      return;
+    }
+    
+    setClaiming(true);
+    
+    try {
+      // Get the secret key for this paylink
+      const secretKey = await getPayLinkSecretKey(payLink.id);
+      if (!secretKey) {
+        throw new Error('Could not retrieve pay link keys');
+      }
+      
+      // Claim all tokens
+      const result: ClaimResult = await claimAllTokens(secretKey, trimmedAddress, tokens);
+      
+      // Close modal
+      setClaimModalVisible(false);
+      setWalletAddress('');
+      
+      // Show result
+      if (result.successfulTransfers === result.totalTokens) {
+        Alert.alert(
+          'Claim Successful',
+          `Successfully transferred ${result.successfulTransfers} token${result.successfulTransfers !== 1 ? 's' : ''} to your wallet.`,
+          [{ text: 'OK' }]
+        );
+      } else if (result.successfulTransfers > 0) {
+        Alert.alert(
+          'Partial Success',
+          `Transferred ${result.successfulTransfers}/${result.totalTokens} tokens.\n\nErrors:\n${result.errors.join('\n')}`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert(
+          'Claim Failed',
+          `Failed to transfer tokens.\n\nErrors:\n${result.errors.join('\n')}`,
+          [{ text: 'OK' }]
+        );
+      }
+      
+      // Refresh token list
+      await loadTokens();
+    } catch (error: any) {
+      console.error('[Claim] Error:', error);
+      Alert.alert(
+        'Error',
+        error?.message || 'An unexpected error occurred while claiming tokens.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setClaiming(false);
+    }
   };
 
   const formatBalance = (amount: number, decimals: number): string => {
@@ -276,7 +373,7 @@ export default function PayLinkDetailsScreen() {
                     styles.actionBtnSecondary,
                     pressed && styles.actionBtnPressed,
                   ]}
-                  onPress={() => {}}
+                  onPress={handleOpenClaimModal}
                 >
                   <Text style={styles.actionBtnTextSecondary}>Claim publicly</Text>
                 </Pressable>
@@ -314,6 +411,74 @@ export default function PayLinkDetailsScreen() {
           </View>
         </>
       )}
+
+      {/* Claim Publicly Modal */}
+      <Modal
+        visible={claimModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCloseClaimModal}
+      >
+        <Pressable style={styles.modalOverlay} onPress={handleCloseClaimModal}>
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Claim publicly</Text>
+            <Text style={styles.modalDesc}>
+              Enter the Solana wallet address where you want to receive your tokens.
+            </Text>
+            
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={[styles.input, walletError ? styles.inputError : null]}
+                placeholder="Solana wallet address"
+                placeholderTextColor={colors.textMuted}
+                value={walletAddress}
+                onChangeText={(text) => {
+                  setWalletAddress(text);
+                  if (walletError) setWalletError('');
+                }}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!claiming}
+                selectTextOnFocus
+              />
+              {walletError ? (
+                <Text style={styles.errorText}>{walletError}</Text>
+              ) : null}
+            </View>
+            
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnSecondary,
+                  pressed && styles.modalBtnPressed,
+                  claiming && styles.modalBtnDisabled,
+                ]}
+                onPress={handleCloseClaimModal}
+                disabled={claiming}
+              >
+                <Text style={styles.modalBtnTextSecondary}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  pressed && styles.modalBtnPressed,
+                  claiming && styles.modalBtnDisabled,
+                ]}
+                onPress={handleClaimPublicly}
+                disabled={claiming}
+              >
+                {claiming ? (
+                  <ActivityIndicator size="small" color={colors.text} />
+                ) : (
+                  <Text style={styles.modalBtnTextPrimary}>Claim tokens</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -557,6 +722,104 @@ const styles = StyleSheet.create({
     ...typography.button,
     fontSize: 15,
     color: colors.accent,
+    fontWeight: '600',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingTop: 120,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  modalContent: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    width: '90%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  modalTitle: {
+    ...typography.title,
+    fontSize: 22,
+    color: colors.text,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  modalDesc: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  inputContainer: {
+    marginBottom: spacing.lg,
+  },
+  input: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    fontSize: 15,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    fontFamily: 'monospace',
+  },
+  inputError: {
+    borderColor: colors.error,
+  },
+  errorText: {
+    ...typography.caption,
+    fontSize: 13,
+    color: colors.error,
+    marginTop: spacing.xs,
+    marginLeft: spacing.xs,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  modalBtnPrimary: {
+    backgroundColor: colors.accent,
+  },
+  modalBtnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalBtnPressed: {
+    opacity: 0.7,
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
+  },
+  modalBtnTextPrimary: {
+    ...typography.button,
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  modalBtnTextSecondary: {
+    ...typography.button,
+    fontSize: 15,
+    color: colors.textMuted,
     fontWeight: '600',
   },
 });

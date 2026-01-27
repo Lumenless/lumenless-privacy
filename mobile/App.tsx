@@ -1,4 +1,3 @@
-import 'react-native-get-random-values'; // Must be first for crypto polyfill
 import 'react-native-gesture-handler'; // Must be imported early for React Navigation
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';

@@ -14,6 +14,8 @@ export const colors = {
   accentGlow: 'rgba(139, 92, 246, 0.25)',
   success: '#22c55e',
   successDim: 'rgba(34, 197, 94, 0.15)',
+  error: '#ef4444',
+  errorDim: 'rgba(239, 68, 68, 0.15)',
   overlay: 'rgba(0, 0, 0, 0.75)',
 };
 
