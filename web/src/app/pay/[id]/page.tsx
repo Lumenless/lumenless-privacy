@@ -12,11 +12,13 @@ import { useConnector, useAccount, useTransactionSigner } from '@solana/connecto
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WalletButton } from '@/components/WalletButton';
 import { motion } from 'framer-motion';
+import { QRCodeSVG } from 'qrcode.react';
 import { 
   Connection, 
   PublicKey, 
   LAMPORTS_PER_SOL,
   VersionedTransaction,
+  SystemProgram,
 } from '@solana/web3.js';
 
 const SOL_AMOUNTS = [0.01, 0.05, 0.1, 0.5, 1];
@@ -53,11 +55,21 @@ export default function PayPage() {
   );
 }
 
+// Helper to check if a string is a valid Solana wallet address
+function isValidWalletAddress(address: string): boolean {
+  try {
+    new PublicKey(address);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function PayView() {
   const params = useParams();
   const encodedData = params.id as string;
   
-  const { connected } = useConnector();
+  const { connected, select } = useConnector();
   const { account } = useAccount();
   const { signer } = useTransactionSigner();
   const ownerAddress = useMemo(() => account?.address || null, [account]);
@@ -66,14 +78,23 @@ function PayView() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ tx: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [progressMessage, setProgressMessage] = useState<string>('');
   
   const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
     return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
 
-  // Decode pay link data from URL
+  // Check if the parameter is a wallet address
+  const isWalletAddress = useMemo(() => {
+    return isValidWalletAddress(encodedData);
+  }, [encodedData]);
+
+  // Decode pay link data from URL (only if not a wallet address)
   const payLinkData = useMemo<PayLinkData | null>(() => {
+    if (isWalletAddress) return null;
+    
     try {
       // URL decode first, then base64 decode
       const urlDecoded = decodeURIComponent(encodedData);
@@ -87,7 +108,7 @@ function PayView() {
     } catch {
       return null;
     }
-  }, [encodedData]);
+  }, [encodedData, isWalletAddress]);
 
   // Check if this is a valid new-format link
   const isValidLink = payLinkData !== null;
@@ -109,8 +130,6 @@ function PayView() {
       setAmount(value);
     }
   }, []);
-
-  const [progressMessage, setProgressMessage] = useState<string>('');
 
   const handlePay = useCallback(async () => {
     if (!signer || !ownerAddress) {
@@ -221,6 +240,367 @@ function PayView() {
     }
   }, [signer, ownerAddress, isValidLink, payLinkData, amount, endpoint]);
 
+  // Handle direct SOL transfer to wallet address
+  const handleFundWallet = useCallback(async () => {
+    if (!signer || !ownerAddress) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    if (!isWalletAddress) {
+      setError('Invalid wallet address');
+      return;
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+
+    if (parsedAmount < 0.001) {
+      setError('Minimum amount is 0.001 SOL');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setError(null);
+      setSuccess(null);
+      setProgressMessage('Creating transaction...');
+
+      const lamports = Math.floor(parsedAmount * LAMPORTS_PER_SOL);
+      const connection = new Connection(endpoint, 'confirmed');
+      const destination = new PublicKey(encodedData);
+      
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: new PublicKey(ownerAddress),
+          toPubkey: destination,
+          lamports,
+        })
+      );
+
+      setProgressMessage('Please sign the transaction...');
+      const signed = await signer.signTransaction(transaction);
+      const signature = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+      });
+
+      await connection.confirmTransaction(signature, 'confirmed');
+      setSuccess({ tx: signature });
+    } catch (err) {
+      console.error('Funding error:', err);
+      setError(err instanceof Error ? err.message : 'Funding failed. Please try again.');
+    } finally {
+      setIsProcessing(false);
+      setProgressMessage('');
+    }
+  }, [signer, ownerAddress, isWalletAddress, encodedData, amount, endpoint]);
+
+  // Copy wallet address to clipboard
+  const handleCopyAddress = useCallback(async () => {
+    if (!isWalletAddress) return;
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(encodedData);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
+      
+      // Fallback to execCommand for older browsers or non-HTTPS contexts
+      const textArea = document.createElement('textarea');
+      textArea.value = encodedData;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      if (successful) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        throw new Error('Copy command failed');
+      }
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      // Show error to user
+      setError('Failed to copy to clipboard. Please copy manually.');
+      setTimeout(() => setError(null), 3000);
+    }
+  }, [isWalletAddress, encodedData]);
+
+  // Show funding options if it's a wallet address
+  if (isWalletAddress) {
+    return (
+      <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-gray-50 to-white">
+        {/* Subtle background pattern */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.03 }}
+            transition={{ duration: 1 }}
+            className="absolute top-10 -right-32 w-[500px] h-[500px] rounded-full blur-3xl"
+            style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%)' }}
+          />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.02 }}
+            transition={{ duration: 1, delay: 0.2 }}
+            className="absolute -bottom-20 -left-32 w-[400px] h-[400px] rounded-full blur-3xl"
+            style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' }}
+          />
+        </div>
+
+        {/* Header */}
+        <header className="relative z-10 flex items-center justify-between px-4 md:px-8 py-6 border-b border-gray-200 bg-white/80 backdrop-blur-sm">
+          <a href="/" className="flex items-center gap-2">
+            <Image src="/logo.svg" alt="Lumenless Logo" width={36} height={36} />
+            <span className="font-semibold text-lg text-gray-900">Lumenless</span>
+          </a>
+          <WalletButton />
+        </header>
+
+        {/* Main Content */}
+        <main className="relative z-10 px-4 md:px-8 py-12 flex flex-col items-center min-h-[calc(100vh-73px-64px)]">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="text-center mb-12"
+          >
+            <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+              Fund Wallet
+            </h1>
+            <p className="text-lg text-gray-600 max-w-xl mx-auto">
+              Choose how you&apos;d like to fund this wallet address
+            </p>
+          </motion.div>
+
+          <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Option 1: Show Wallet Address */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+            >
+              <Card className="bg-white border border-gray-200 shadow-lg hover:shadow-xl transition-shadow h-full">
+                <CardHeader>
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-lg">
+                    <span className="text-2xl">📋</span>
+                  </div>
+                  <CardTitle className="text-gray-900 text-center text-xl">Copy Address</CardTitle>
+                  <CardDescription className="text-gray-600 text-center">
+                    Copy the wallet address to fund it from any wallet
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
+                    <p className="text-xs text-gray-500 mb-2 font-medium">Wallet Address</p>
+                    <div className="flex items-start gap-2">
+                      <code className="flex-1 text-sm text-gray-900 font-mono break-all leading-relaxed">
+                        {encodedData}
+                      </code>
+                      <Button
+                        onClick={handleCopyAddress}
+                        variant="outline"
+                        size="sm"
+                        className="border-gray-300 text-gray-700 hover:bg-gray-100 hover:border-gray-400 shrink-0"
+                      >
+                        {copied ? '✓ Copied' : 'Copy'}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            {/* Option 2: QR Code */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+            >
+              <Card className="bg-white border border-gray-200 shadow-lg hover:shadow-xl transition-shadow h-full">
+                <CardHeader>
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-lg">
+                    <span className="text-2xl">📱</span>
+                  </div>
+                  <CardTitle className="text-gray-900 text-center text-xl">QR Code</CardTitle>
+                  <CardDescription className="text-gray-600 text-center">
+                    Scan with your mobile wallet to fund
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center space-y-4">
+                  <div className="p-6 rounded-xl bg-white border-2 border-gray-200 shadow-inner">
+                    <QRCodeSVG
+                      value={encodedData}
+                      size={200}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <p className="text-sm text-gray-600 text-center">
+                    Scan this QR code with any Solana wallet app
+                  </p>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            {/* Option 3: Connect Wallet */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.3 }}
+            >
+              <Card className="bg-white border border-gray-200 shadow-lg hover:shadow-xl transition-shadow h-full">
+                <CardHeader>
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-lg">
+                    <span className="text-2xl">🔗</span>
+                  </div>
+                  <CardTitle className="text-gray-900 text-center text-xl">Connect Wallet</CardTitle>
+                  <CardDescription className="text-gray-600 text-center">
+                    Connect your wallet to send SOL directly
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {!connected ? (
+                    <div className="text-center space-y-4">
+                      <p className="text-gray-600 text-sm">Connect your wallet to send funds</p>
+                      <WalletButton />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-sm text-gray-700 mb-2 block font-medium">Amount (SOL)</label>
+                        <div className="relative">
+                          <Input
+                            type="text"
+                            value={amount}
+                            onChange={(e) => {
+                              if (/^\d*\.?\d*$/.test(e.target.value)) {
+                                setAmount(e.target.value);
+                              }
+                            }}
+                            placeholder="0.00"
+                            className="bg-gray-50 border-gray-300 text-gray-900 text-xl font-bold text-center h-12 pr-16 focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                          />
+                          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                            <Image
+                              src="/sol.svg"
+                              alt="SOL"
+                              width={20}
+                              height={20}
+                            />
+                            <span className="text-gray-600 font-medium text-sm">SOL</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-5 gap-2">
+                        {SOL_AMOUNTS.map((amt) => (
+                          <button
+                            key={amt}
+                            onClick={() => setAmount(amt.toString())}
+                            className={`h-9 px-2 rounded-lg border text-xs font-medium transition-all
+                              ${parseFloat(amount) === amt 
+                                ? 'bg-gradient-to-r from-cyan-600 to-violet-600 border-transparent text-white shadow-md' 
+                                : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400'
+                              }`}
+                          >
+                            {amt}
+                          </button>
+                        ))}
+                      </div>
+
+                      {error && (
+                        <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                          <p className="text-red-600 text-sm">{error}</p>
+                        </div>
+                      )}
+
+                      {success && (
+                        <div className="p-3 rounded-lg bg-green-50 border border-green-200">
+                          <p className="text-green-700 text-sm mb-2 font-medium">Transaction successful!</p>
+                          <a 
+                            href={`https://solscan.io/tx/${success.tx}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-violet-600 hover:text-violet-700 transition-colors font-medium"
+                          >
+                            View transaction →
+                          </a>
+                        </div>
+                      )}
+
+                      <Button
+                        onClick={handleFundWallet}
+                        className="w-full h-12 bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-700 hover:to-violet-700 text-white shadow-lg hover:shadow-xl transition-all font-semibold"
+                        disabled={isProcessing}
+                      >
+                        {isProcessing ? (
+                          <span className="flex items-center gap-2">
+                            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            {progressMessage || 'Processing...'}
+                          </span>
+                        ) : (
+                          `Send ${amount || '0'} SOL`
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            {/* Option 4: PrivacyCash */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+            >
+              <Card className="bg-white border border-gray-200 shadow-lg hover:shadow-xl transition-shadow h-full">
+                <CardHeader>
+                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-lg">
+                    <span className="text-2xl">🔐</span>
+                  </div>
+                  <CardTitle className="text-gray-900 text-center text-xl">PrivacyCash</CardTitle>
+                  <CardDescription className="text-gray-600 text-center">
+                    Fund privately using PrivacyCash
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center justify-center space-y-4 min-h-[200px]">
+                  <div className="p-6 rounded-xl bg-gradient-to-br from-violet-50 to-cyan-50 border border-violet-200">
+                    <p className="text-gray-900 font-semibold text-center mb-2">Coming Soon</p>
+                    <p className="text-gray-600 text-sm text-center">
+                      Private funding through PrivacyCash will be available soon
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+
+          {/* Footer */}
+          <footer className="relative z-10 mt-16 py-8 text-center text-sm text-gray-500 border-t border-gray-200 w-full bg-white/50">
+            <p>© 2025 Lumenless. Powered by PrivacyCash.</p>
+          </footer>
+        </main>
+      </div>
+    );
+  }
+
+  // Original pay link UI (when not a wallet address)
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ backgroundColor: '#0a0a0f' }}>
       {/* Animated background */}
