@@ -337,139 +337,78 @@ function PayView() {
     }
   }, [isWalletAddress, encodedData]);
 
-  // Show funding options if it's a wallet address
+  // Show funding options if it's a wallet address (Monobank-style: purple gradient + white card, two panels)
   if (isWalletAddress) {
     return (
-      <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-gray-50 to-white">
-        {/* Subtle background pattern */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.03 }}
-            transition={{ duration: 1 }}
-            className="absolute top-10 -right-32 w-[500px] h-[500px] rounded-full blur-3xl"
-            style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%)' }}
-          />
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.02 }}
-            transition={{ duration: 1, delay: 0.2 }}
-            className="absolute -bottom-20 -left-32 w-[400px] h-[400px] rounded-full blur-3xl"
-            style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)' }}
-          />
-        </div>
+      <div
+        className="min-h-screen flex flex-col items-center justify-center py-8 px-4"
+        style={{
+          background: 'linear-gradient(180deg, #7c3aed 0%, #5b21b6 35%, #4c1d95 100%)',
+        }}
+      >
+        {/* Single white card - two panels like Monobank */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden"
+        >
+          <div className="flex flex-col md:flex-row min-h-[420px]">
+            {/* Left panel: Recipient / campaign info */}
+            <div className="md:w-[45%] p-8 md:p-10 flex flex-col bg-gray-50/80">
+              <a href="/" className="flex items-center gap-2 mb-8">
+                <Image src="/logo.svg" alt="Lumenless" width={28} height={28} />
+                <span className="font-semibold text-gray-800 text-lg">Lumenless</span>
+              </a>
+              <div className="flex-1 flex flex-col justify-center">
+                <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-2">
+                  Fund this wallet
+                </h1>
+                <p className="text-sm text-gray-500 mb-4">
+                  Send SOL, USDC or <a href='https://pump.fun/coin/6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM' target='_blank'>LUMEN</a> to the address below. Use any Solana wallet to scan the QR code or copy the address.
+                </p>
+                <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Wallet address</p>
+                <p className="text-sm text-gray-700 font-mono break-all leading-relaxed">
+                  {encodedData}
+                </p>
+              </div>
+            </div>
 
-        {/* Header */}
-        <header className="relative z-10 flex items-center px-4 md:px-8 py-6 border-b border-gray-200 bg-white/80 backdrop-blur-sm">
-          <a href="/" className="flex items-center gap-2">
-            <Image src="/logo.svg" alt="Lumenless Logo" width={36} height={36} />
-            <span className="font-semibold text-lg text-gray-900">Lumenless</span>
-          </a>
-        </header>
-
-        {/* Main Content */}
-        <main className="relative z-10 px-4 md:px-8 py-12 flex flex-col items-center min-h-[calc(100vh-73px-64px)]">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="text-center mb-12"
-          >
-            <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              Fund Wallet
-            </h1>
-            <p className="text-lg text-gray-600 max-w-xl mx-auto">
-              Choose how you&apos;d like to fund this wallet address
-            </p>
-          </motion.div>
-
-          <div className="w-full max-w-3xl space-y-6">
-            {/* Combined: Address + QR Code */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.1 }}
-            >
-              <Card className="bg-white border border-gray-200/80 shadow-xl shadow-gray-200/50 overflow-hidden">
-                <div className="flex flex-col md:flex-row md:min-h-[320px]">
-                  {/* QR Code section */}
-                  <div className="flex flex-col items-center justify-center p-8 md:p-10 bg-gradient-to-br from-gray-50 to-white border-b md:border-b-0 md:border-r border-gray-100">
-                    <div className="p-5 rounded-2xl bg-white border border-gray-200/80 shadow-sm">
-                      <QRCodeSVG
-                        value={encodedData}
-                        size={220}
-                        level="H"
-                        includeMargin={true}
-                      />
-                    </div>
-                    <p className="text-sm text-gray-500 mt-4 font-medium">
-                      Scan with any Solana wallet
-                    </p>
-                  </div>
-                  {/* Address + Copy section */}
-                  <div className="flex flex-col justify-center p-8 md:p-10 flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-md">
-                        <span className="text-lg">📋</span>
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900">Wallet Address</h3>
-                        <p className="text-sm text-gray-500">Copy and paste to fund from any wallet</p>
-                      </div>
-                    </div>
-                    <div className="rounded-xl bg-gray-50/80 border border-gray-200/80 p-4">
-                      <div className="flex gap-3 items-start">
-                        <code className="flex-1 text-sm text-gray-800 font-mono break-all leading-relaxed min-w-0">
-                          {encodedData}
-                        </code>
-                        <Button
-                          onClick={handleCopyAddress}
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0 border-gray-300 text-gray-700 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700 transition-colors font-medium"
-                        >
-                          {copied ? '✓ Copied' : 'Copy'}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+            {/* Right panel: Payment / fund actions */}
+            <div className="md:w-[55%] p-8 md:p-10 flex flex-col justify-center border-t md:border-t-0 md:border-l border-gray-200">
+              <p className="text-sm text-gray-500 mb-4">How to fund</p>
+              {/* QR code */}
+              <div className="flex justify-center mb-6">
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-sm">
+                  <QRCodeSVG
+                    value={encodedData}
+                    size={200}
+                    level="H"
+                    includeMargin={true}
+                  />
                 </div>
-              </Card>
-            </motion.div>
-
-            {/* PrivacyCash */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-            >
-              <Card className="bg-white border border-gray-200 shadow-lg hover:shadow-xl transition-shadow h-full">
-                <CardHeader>
-                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center shadow-lg">
-                    <span className="text-2xl">🔐</span>
-                  </div>
-                  <CardTitle className="text-gray-900 text-center text-xl">PrivacyCash</CardTitle>
-                  <CardDescription className="text-gray-600 text-center">
-                    Fund privately using PrivacyCash
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col items-center justify-center space-y-4 min-h-[200px]">
-                  <div className="p-6 rounded-xl bg-gradient-to-br from-violet-50 to-cyan-50 border border-violet-200">
-                    <p className="text-gray-900 font-semibold text-center mb-2">Coming Soon</p>
-                    <p className="text-gray-600 text-sm text-center">
-                      Private funding through PrivacyCash will be available soon
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+              </div>
+              <p className="text-center text-xs text-gray-500 mb-6">Scan with any Solana wallet</p>
+              {/* Copy address button - primary black button like mono Pay */}
+              <button
+                type="button"
+                onClick={handleCopyAddress}
+                className="w-full py-3.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-white font-medium text-center transition-colors mb-3"
+              >
+                {copied ? 'Copied' : 'Copy address'}
+              </button>
+              {/* Secondary link - like "Enter card details" */}
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <span className="text-2xl">🔐</span>
+                <span className="text-sm text-gray-500">PrivacyCash — coming soon</span>
+              </div>
+            </div>
           </div>
+        </motion.div>
 
-          {/* Footer */}
-          <footer className="relative z-10 mt-16 py-8 text-center text-sm text-gray-500 border-t border-gray-200 w-full bg-white/50">
-            <p>© 2025 Lumenless. Powered by PrivacyCash.</p>
-          </footer>
-        </main>
+        <footer className="mt-8 text-center text-xs text-white/70">
+          © 2025 Lumenless
+        </footer>
       </div>
     );
   }
