@@ -24,6 +24,8 @@ export const metadata: Metadata = {
   },
 };
 
+const GA_MEASUREMENT_ID = 'G-7JXQNJFHX6';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -31,6 +33,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Google tag (gtag.js) - loads on every page */}
+        <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', '${GA_MEASUREMENT_ID}');
+            `,
+          }}
+        />
+      </head>
       <body className="antialiased">
         {children}
       </body>
