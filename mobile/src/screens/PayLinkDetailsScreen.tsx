@@ -18,19 +18,30 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { getTokenAccounts, TokenAccount } from '../services/tokens';
 import { deletePayLink, PayLink, getPayLinkUrl, getPayLinkSecretKey } from '../services/paylink';
-import { isValidSolanaAddress, claimAllTokens, ClaimResult } from '../services/transfer';
+import {
+  isValidSolanaAddress,
+  base64AddressToBase58,
+  claimAllTokens,
+  ClaimResult,
+  getClaimablePrivacyCashTokens,
+  hasClaimablePrivacyCashTokens,
+  payLinkHasSolForGas,
+  claimToPrivacyCash,
+  ClaimToPrivacyCashResult,
+} from '../services/transfer';
+import { VersionedTransaction } from '@solana/web3.js';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import Logo from '../components/Logo';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
-type RouteProp = RouteProp<RootStackParamList, 'PayLinkDetails'>;
+type PayLinkDetailsRouteProp = RouteProp<RootStackParamList, 'PayLinkDetails'>;
 
 export default function PayLinkDetailsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
-  const route = useRoute<RouteProp>();
+  const route = useRoute<PayLinkDetailsRouteProp>();
   const { payLink } = route.params;
 
   const [tokens, setTokens] = useState<TokenAccount[]>([]);
@@ -44,6 +55,10 @@ export default function PayLinkDetailsScreen() {
   const [walletAddress, setWalletAddress] = useState('');
   const [walletError, setWalletError] = useState('');
   const [claiming, setClaiming] = useState(false);
+
+  // Claim into PrivacyCash modal state
+  const [privacyCashModalVisible, setPrivacyCashModalVisible] = useState(false);
+  const [privacyCashClaiming, setPrivacyCashClaiming] = useState(false);
 
   useEffect(() => {
     loadTokens();
@@ -100,6 +115,98 @@ export default function PayLinkDetailsScreen() {
       setClaimModalVisible(false);
       setWalletAddress('');
       setWalletError('');
+    }
+  };
+
+  const handleOpenClaimIntoPrivacyCash = () => {
+    if (!hasClaimablePrivacyCashTokens(tokens)) {
+      Alert.alert(
+        'Nothing to claim',
+        'This pay link has no SOL, USDC, or USDT. Only these tokens can be claimed into PrivacyCash. Add one of them to your pay link first.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    setPrivacyCashModalVisible(true);
+  };
+
+  const handleClosePrivacyCashModal = () => {
+    if (!privacyCashClaiming) {
+      setPrivacyCashModalVisible(false);
+    }
+  };
+
+  const handleClaimIntoPrivacyCash = async () => {
+    const claimable = getClaimablePrivacyCashTokens(tokens);
+    const payLinkHasSol = payLinkHasSolForGas(tokens);
+
+    setPrivacyCashClaiming(true);
+    try {
+      const secretKey = await getPayLinkSecretKey(payLink.id);
+      if (!secretKey) {
+        throw new Error('Could not retrieve pay link keys');
+      }
+
+      // Dynamic import to avoid loading wallet adapter until user taps Claim
+      const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+      await mwa.transact(async (wallet) => {
+        const authResult = await wallet.authorize({
+          cluster: 'mainnet-beta',
+          identity: {
+            name: 'Lumenless',
+            uri: 'https://lumenless.com',
+            icon: 'icon.png',
+          },
+        });
+        const base64Address = authResult.accounts[0].address;
+        const userPublicKey = base64AddressToBase58(base64Address);
+
+        const signMessage = async (message: Uint8Array): Promise<Uint8Array> => {
+          const result = await wallet.signMessages({
+            addresses: [base64Address],
+            payloads: [message],
+          });
+          return result[0];
+        };
+
+        const signTransaction = async (tx: Uint8Array): Promise<Uint8Array> => {
+          const versionedTx = VersionedTransaction.deserialize(tx);
+          const [signedTx] = await wallet.signTransactions({
+            transactions: [versionedTx],
+          });
+          return new Uint8Array(signedTx.serialize());
+        };
+
+        const result: ClaimToPrivacyCashResult = await claimToPrivacyCash(
+          secretKey,
+          userPublicKey,
+          signMessage,
+          signTransaction,
+          claimable,
+          payLinkHasSol
+        );
+
+        if (result.success) {
+          setPrivacyCashModalVisible(false);
+          Alert.alert(
+            'Claim Successful',
+            `Deposited into your PrivacyCash balance.${result.signatures.length ? `\n\nTx: ${result.signatures[0]}` : ''}`,
+            [{ text: 'OK' }]
+          );
+          loadTokens();
+        } else {
+          Alert.alert('Claim into PrivacyCash', result.error ?? 'Something went wrong.', [{ text: 'OK' }]);
+        }
+      });
+    } catch (error: any) {
+      console.error('[ClaimIntoPrivacyCash] Error:', error);
+      Alert.alert(
+        'Error',
+        error?.message || 'Could not complete claim. Make sure your wallet app is installed and try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setPrivacyCashClaiming(false);
     }
   };
 
@@ -374,7 +481,7 @@ export default function PayLinkDetailsScreen() {
                     styles.actionBtnSecondary,
                     pressed && styles.actionBtnPressed,
                   ]}
-                  onPress={() => {}}
+                  onPress={handleOpenClaimIntoPrivacyCash}
                 >
                   <Text style={styles.actionBtnTextSecondary}>Claim into PrivacyCash</Text>
                 </Pressable>
@@ -422,6 +529,74 @@ export default function PayLinkDetailsScreen() {
           </View>
         </>
       )}
+
+      {/* Claim into PrivacyCash Modal */}
+      <Modal
+        visible={privacyCashModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleClosePrivacyCashModal}
+      >
+        <Pressable style={styles.modalOverlay} onPress={handleClosePrivacyCashModal}>
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Claim into PrivacyCash</Text>
+            <Text style={styles.modalDesc}>
+              Only SOL, USDC, and USDT can be deposited into your PrivacyCash balance. Gas: Pay Link pays if it has SOL, otherwise your wallet pays.
+            </Text>
+            {(() => {
+              const claimable = getClaimablePrivacyCashTokens(tokens);
+              const payLinkHasSol = payLinkHasSolForGas(tokens);
+              return (
+                <>
+                  <View style={styles.claimableList}>
+                    {claimable.map((item) => (
+                      <View key={item.mint} style={styles.claimableRow}>
+                        <Text style={styles.claimableSymbol}>{item.symbol ?? item.mint.slice(0, 8)}</Text>
+                        <Text style={styles.claimableAmount}>
+                          {item.amount.toLocaleString(undefined, { maximumFractionDigits: 9 })} {item.symbol ?? ''}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={styles.modalDesc}>
+                    {payLinkHasSol ? 'Pay Link wallet will pay gas.' : 'Your wallet will pay gas (Pay Link has no SOL).'}
+                  </Text>
+                  <View style={styles.modalButtons}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.modalBtn,
+                        styles.modalBtnSecondary,
+                        pressed && styles.modalBtnPressed,
+                        privacyCashClaiming && styles.modalBtnDisabled,
+                      ]}
+                      onPress={handleClosePrivacyCashModal}
+                      disabled={privacyCashClaiming}
+                    >
+                      <Text style={styles.modalBtnTextSecondary}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.modalBtn,
+                        styles.modalBtnPrimary,
+                        pressed && styles.modalBtnPressed,
+                        privacyCashClaiming && styles.modalBtnDisabled,
+                      ]}
+                      onPress={handleClaimIntoPrivacyCash}
+                      disabled={privacyCashClaiming}
+                    >
+                      {privacyCashClaiming ? (
+                        <ActivityIndicator size="small" color={colors.text} />
+                      ) : (
+                        <Text style={styles.modalBtnTextPrimary}>Connect wallet & Claim</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </>
+              );
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Claim Publicly Modal */}
       <Modal
@@ -793,6 +968,28 @@ const styles = StyleSheet.create({
     color: colors.error,
     marginTop: spacing.xs,
     marginLeft: spacing.xs,
+  },
+  claimableList: {
+    marginVertical: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    gap: spacing.xs,
+  },
+  claimableRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  claimableSymbol: {
+    ...typography.body,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  claimableAmount: {
+    ...typography.body,
+    color: colors.textMuted,
   },
   modalButtons: {
     flexDirection: 'row',

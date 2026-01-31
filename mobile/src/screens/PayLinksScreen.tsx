@@ -6,9 +6,12 @@ import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
+  Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { PayLinkModal, CreatePayLinkModal } from '../components';
@@ -18,8 +21,20 @@ import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { testNetworkConnectivity } from '../services/balances';
+import {
+  getPrivacyCashBalance,
+  withdrawFromPrivacyCash,
+  PrivacyCashBalances,
+  WithdrawResult,
+  TokenKind,
+  PRIVACYCASH_TOKEN_LABELS,
+} from '../services/privacycash';
+import { isValidSolanaAddress, base64AddressToBase58 } from '../services/transfer';
+import { VersionedTransaction } from '@solana/web3.js';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
+
+const PC_TOKENS: TokenKind[] = ['SOL', 'USDC', 'USDT'];
 
 export default function PayLinksScreen() {
   const insets = useSafeAreaInsets();
@@ -34,6 +49,19 @@ export default function PayLinksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
   const [showingHidden, setShowingHidden] = useState(false);
+
+  // Private wallet (PrivacyCash) state
+  const [pcBalance, setPcBalance] = useState<PrivacyCashBalances | null>(null);
+  const [pcUserAddress, setPcUserAddress] = useState<string | null>(null);
+  const [pcLoading, setPcLoading] = useState(false);
+  const [pcError, setPcError] = useState<string | null>(null);
+  const [withdrawModalVisible, setWithdrawModalVisible] = useState(false);
+  const [withdrawToken, setWithdrawToken] = useState<TokenKind>('SOL');
+  const [withdrawAddress, setWithdrawAddress] = useState('');
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawError, setWithdrawError] = useState('');
+  const [withdrawing, setWithdrawing] = useState(false);
+  const connectDoneRef = useRef(false);
 
   const loadPayLinks = useCallback(async () => {
     setLoading(true);
@@ -83,8 +111,148 @@ export default function PayLinksScreen() {
 
   const handleToggleHidden = useCallback(async () => {
     setShowingHidden(!showingHidden);
-    // loadPayLinks will be called automatically via useEffect dependency
   }, [showingHidden]);
+
+  const handleConnectAndLoadBalance = useCallback(async () => {
+    console.log('[PayLinksScreen] Connect wallet: start');
+    setPcLoading(true);
+    setPcError(null);
+    connectDoneRef.current = false;
+    const SAFETY_TIMEOUT_MS = 30000;
+    const safetyTimer = setTimeout(() => {
+      if (!connectDoneRef.current) {
+        console.log('[PayLinksScreen] Connect wallet: safety timeout fired');
+        setPcError('Request timed out. Try again.');
+        setPcLoading(false);
+      }
+    }, SAFETY_TIMEOUT_MS);
+    try {
+      console.log('[PayLinksScreen] Connect wallet: loading MWA...');
+      const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+      console.log('[PayLinksScreen] Connect wallet: starting transact (authorize + balance)...');
+      await mwa.transact(async (wallet) => {
+        console.log('[PayLinksScreen] Connect wallet: calling wallet.authorize...');
+        const authResult = await wallet.authorize({
+          cluster: 'mainnet-beta',
+          identity: { name: 'Lumenless', uri: 'https://lumenless.com', icon: 'icon.png' },
+        });
+        const base64Address = authResult.accounts[0].address;
+        const userPublicKey = base64AddressToBase58(base64Address);
+        console.log('[PayLinksScreen] Connect wallet: authorized, address:', userPublicKey);
+        setPcUserAddress(userPublicKey);
+        const signMessage = async (message: Uint8Array): Promise<Uint8Array> => {
+          const result = await wallet.signMessages({ addresses: [base64Address], payloads: [message] });
+          return result[0];
+        };
+        console.log('[PayLinksScreen] Connect wallet: fetching PrivacyCash balance...');
+        const balances = await getPrivacyCashBalance(userPublicKey, signMessage, null);
+        console.log('[PayLinksScreen] Connect wallet: balance received', { sol: balances.sol, usdc: balances.usdc, usdt: balances.usdt });
+        setPcBalance(balances);
+      });
+      console.log('[PayLinksScreen] Connect wallet: transact finished');
+    } catch (err: unknown) {
+      console.error('[PayLinksScreen] Connect wallet: error', err);
+      setPcError(err instanceof Error ? err.message : 'Could not load balance. Connect your wallet and try again.');
+      setPcBalance(null);
+      setPcUserAddress(null);
+    } finally {
+      connectDoneRef.current = true;
+      clearTimeout(safetyTimer);
+      setPcLoading(false);
+      console.log('[PayLinksScreen] Connect wallet: done (finally)');
+    }
+  }, []);
+
+  const openWithdrawModal = useCallback((token: TokenKind) => {
+    setWithdrawToken(token);
+    setWithdrawAddress('');
+    setWithdrawAmount('');
+    setWithdrawError('');
+    setWithdrawModalVisible(true);
+  }, []);
+
+  const handleWithdraw = useCallback(async () => {
+    const address = withdrawAddress.trim();
+    const amountStr = withdrawAmount.trim();
+    if (!address) {
+      setWithdrawError('Enter destination wallet address');
+      return;
+    }
+    if (!isValidSolanaAddress(address)) {
+      setWithdrawError('Invalid Solana wallet address');
+      return;
+    }
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      setWithdrawError('Enter a valid amount');
+      return;
+    }
+    const bal = pcBalance ?? { sol: 0, usdc: 0, usdt: 0 };
+    const maxAmount = withdrawToken === 'SOL' ? bal.sol : withdrawToken === 'USDC' ? bal.usdc : bal.usdt;
+    if (amount > maxAmount) {
+      setWithdrawError(`Insufficient balance (max ${maxAmount})`);
+      return;
+    }
+    setWithdrawing(true);
+    setWithdrawError('');
+    try {
+      const mwaWithdraw = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+      await mwaWithdraw.transact(async (wallet) => {
+        const authResult = await wallet.authorize({
+          cluster: 'mainnet-beta',
+          identity: { name: 'Lumenless', uri: 'https://lumenless.com', icon: 'icon.png' },
+        });
+        const base64Address = authResult.accounts[0].address;
+        const userPublicKey = base64AddressToBase58(base64Address);
+        const signMessage = async (msg: Uint8Array) => {
+          const r = await wallet.signMessages({ addresses: [base64Address], payloads: [msg] });
+          return r[0];
+        };
+        const signTransaction = async (tx: Uint8Array) => {
+          const versionedTx = VersionedTransaction.deserialize(tx);
+          const [signedTx] = await wallet.signTransactions({ transactions: [versionedTx] });
+          return new Uint8Array(signedTx.serialize());
+        };
+        const result: WithdrawResult = await withdrawFromPrivacyCash(
+          withdrawToken,
+          amount,
+          address,
+          userPublicKey,
+          signMessage,
+          signTransaction,
+          null
+        );
+        if (result.success) {
+          setWithdrawModalVisible(false);
+          Alert.alert('Withdrawal successful', result.tx ? `Tx: ${result.tx}` : 'Done.', [{ text: 'OK' }]);
+          setPcBalance((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  [withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt']: Math.max(
+                    0,
+                    (prev[withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt'] - amount)
+                  ),
+                }
+              : null
+          );
+        } else {
+          setWithdrawError(result.error ?? 'Withdrawal failed');
+        }
+      });
+    } catch (err: unknown) {
+      setWithdrawError(err instanceof Error ? err.message : 'Withdrawal failed');
+    } finally {
+      setWithdrawing(false);
+    }
+  }, [pcBalance, withdrawAddress, withdrawAmount, withdrawToken]);
+
+  const formatPcBalance = (value: number): string => {
+    if (value === 0) return '0';
+    if (value < 0.0001) return value.toExponential(2);
+    if (value < 1) return value.toFixed(4);
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  };
 
   const handleOpenCreateModal = () => setCreateModalVisible(true);
 
@@ -236,68 +404,115 @@ export default function PayLinksScreen() {
     </View>
   );
 
-  return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
+  const listHeader = (
+    <>
       <View style={styles.header}>
         <Text style={styles.title}>Lumenless</Text>
         <Text style={styles.subtitle}>Receive payments privately</Text>
+      </View>
+
+      {/* Private wallet — compact single-row card */}
+      <View style={styles.privateWalletCard}>
+        <View style={styles.privateWalletLeft}>
+          <Text style={styles.privateWalletTitle}>Private wallet</Text>
+          {pcUserAddress ? (
+            <Text style={styles.privateWalletBalancesCompact} numberOfLines={1}>
+              {PC_TOKENS.map((token) => {
+                const val = pcBalance
+                  ? pcBalance[token === 'SOL' ? 'sol' : token === 'USDC' ? 'usdc' : 'usdt']
+                  : 0;
+                return `${PRIVACYCASH_TOKEN_LABELS[token]} ${formatPcBalance(val)}`;
+              }).join(' · ')}
+            </Text>
+          ) : (
+            <Text style={styles.privateWalletDesc}>
+              Connect your Solana wallet to view and withdraw.
+            </Text>
+          )}
+        </View>
+        <View style={styles.privateWalletRight}>
+          {!pcUserAddress ? (
+            <>
+              {pcError ? <Text style={styles.pcErrorTextCard}>{pcError}</Text> : null}
+              <Pressable
+                style={({ pressed }) => [styles.monoBtn, styles.monoBtnCompact, pressed && styles.monoBtnPressed]}
+                onPress={handleConnectAndLoadBalance}
+                disabled={pcLoading}
+              >
+                {pcLoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.monoBtnText}>Connect wallet</Text>
+                )}
+              </Pressable>
+            </>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [styles.monoBtn, styles.monoBtnSecondary, styles.monoBtnCompact, pressed && styles.monoBtnPressed]}
+              onPress={() => openWithdrawModal('SOL')}
+            >
+              <Text style={styles.monoBtnTextSecondary}>Withdraw</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.payLinksSectionHeader}>
+        <Text style={styles.sectionTitle}>Pay links</Text>
         {hiddenCount > 0 && !showingHidden && (
           <Pressable
-            style={({ pressed }) => [
-              styles.showHiddenBtn,
-              pressed && styles.showHiddenBtnPressed,
-            ]}
+            style={({ pressed }) => [styles.showHiddenBtn, pressed && styles.showHiddenBtnPressed]}
             onPress={handleToggleHidden}
           >
-            <Text style={styles.showHiddenBtnText}>
-              Show hidden ({hiddenCount})
-            </Text>
+            <Text style={styles.showHiddenBtnText}>Show hidden ({hiddenCount})</Text>
           </Pressable>
         )}
         {showingHidden && (
           <Pressable
-            style={({ pressed }) => [
-              styles.showHiddenBtn,
-              pressed && styles.showHiddenBtnPressed,
-            ]}
+            style={({ pressed }) => [styles.showHiddenBtn, pressed && styles.showHiddenBtnPressed]}
             onPress={handleToggleHidden}
           >
-            <Text style={styles.showHiddenBtnText}>
-              Hide hidden
-            </Text>
+            <Text style={styles.showHiddenBtnText}>Hide hidden</Text>
           </Pressable>
         )}
       </View>
+    </>
+  );
 
-      {loading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color={colors.accent} />
-        </View>
-      ) : (
-        <FlatList
-          data={payLinks}
-          keyExtractor={(item) => item.id}
-          renderItem={renderPayLink}
-          ListEmptyComponent={renderEmpty}
-          ListFooterComponent={
-            payLinks.length > 0 ? (
-              <View style={styles.footer}>
-                <CreateButton noTopMargin />
-              </View>
-            ) : null
-          }
-          contentContainerStyle={[styles.list, payLinks.length === 0 && styles.listEmpty]}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={colors.accent}
-              colors={[colors.accent]}
-            />
-          }
-        />
-      )}
+  return (
+    <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.lg }]}>
+      <FlatList
+        data={payLinks}
+        keyExtractor={(item) => item.id}
+        renderItem={renderPayLink}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.loading}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          ) : (
+            renderEmpty
+          )
+        }
+        ListFooterComponent={
+          payLinks.length > 0 ? (
+            <View style={styles.footer}>
+              <CreateButton noTopMargin />
+            </View>
+          ) : null
+        }
+        contentContainerStyle={[styles.list, payLinks.length === 0 && !loading && styles.listEmpty]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#fff"
+            colors={['#fff']}
+          />
+        }
+      />
 
       <CreatePayLinkModal
         visible={createModalVisible}
@@ -310,6 +525,84 @@ export default function PayLinksScreen() {
         publicKey={newLinkPublicKey}
         onClose={() => setSuccessModalVisible(false)}
       />
+
+      <Modal visible={withdrawModalVisible} transparent animationType="fade">
+        <Pressable style={styles.modalOverlay} onPress={() => !withdrawing && setWithdrawModalVisible(false)}>
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Withdraw</Text>
+            <View style={styles.modalTokenRow}>
+              {PC_TOKENS.map((token) => (
+                <Pressable
+                  key={token}
+                  style={({ pressed }) => [
+                    styles.modalTokenBtn,
+                    withdrawToken === token && styles.modalTokenBtnActive,
+                    pressed && styles.modalTokenBtnPressed,
+                  ]}
+                  onPress={() => { setWithdrawToken(token); setWithdrawError(''); setWithdrawAmount(''); }}
+                  disabled={withdrawing}
+                >
+                  <Text style={[styles.modalTokenBtnText, withdrawToken === token && styles.modalTokenBtnTextActive]}>
+                    {PRIVACYCASH_TOKEN_LABELS[token]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.modalDesc}>Send to a Solana wallet address</Text>
+            <TextInput
+              style={[styles.modalInput, withdrawError ? styles.modalInputError : null]}
+              placeholder="Destination wallet address"
+              placeholderTextColor={colors.textMuted}
+              value={withdrawAddress}
+              onChangeText={(t) => {
+                setWithdrawAddress(t);
+                setWithdrawError('');
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!withdrawing}
+            />
+            <TextInput
+              style={[styles.modalInput, withdrawError ? styles.modalInputError : null]}
+              placeholder={`Amount ${PRIVACYCASH_TOKEN_LABELS[withdrawToken]}`}
+              placeholderTextColor={colors.textMuted}
+              value={withdrawAmount}
+              onChangeText={(t) => {
+                setWithdrawAmount(t);
+                setWithdrawError('');
+              }}
+              keyboardType="decimal-pad"
+              editable={!withdrawing}
+            />
+            {withdrawError ? <Text style={styles.pcErrorText}>{withdrawError}</Text> : null}
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={({ pressed }) => [styles.modalBtn, styles.modalBtnSecondary, pressed && styles.modalBtnPressed]}
+                onPress={() => !withdrawing && setWithdrawModalVisible(false)}
+                disabled={withdrawing}
+              >
+                <Text style={styles.modalBtnTextSecondary}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  pressed && styles.modalBtnPressed,
+                  withdrawing && styles.modalBtnDisabled,
+                ]}
+                onPress={handleWithdraw}
+                disabled={withdrawing}
+              >
+                {withdrawing ? (
+                  <ActivityIndicator size="small" color={colors.text} />
+                ) : (
+                  <Text style={styles.modalBtnTextPrimary}>Withdraw</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -317,20 +610,20 @@ export default function PayLinksScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: '#5b21b6',
     paddingHorizontal: spacing.xl,
   },
   header: {
-    marginBottom: spacing.xxl,
+    marginBottom: spacing.lg,
   },
   title: {
     ...typography.title,
-    color: colors.text,
+    color: '#fff',
     fontSize: 26,
   },
   subtitle: {
     ...typography.subtitle,
-    color: colors.textMuted,
+    color: 'rgba(255,255,255,0.85)',
     marginTop: spacing.xs,
   },
   showHiddenBtn: {
@@ -338,9 +631,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accentDim,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderWidth: 1,
-    borderColor: colors.accent,
+    borderColor: 'rgba(255,255,255,0.4)',
     alignSelf: 'flex-start',
   },
   showHiddenBtnPressed: {
@@ -349,8 +642,94 @@ const styles = StyleSheet.create({
   showHiddenBtnText: {
     ...typography.caption,
     fontSize: 13,
-    color: colors.accent,
+    color: '#fff',
     fontWeight: '600',
+  },
+  sectionTitle: {
+    ...typography.subtitle,
+    fontSize: 16,
+    color: '#fff',
+    marginBottom: spacing.md,
+  },
+  privateWalletCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: spacing.xl,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  privateWalletLeft: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  privateWalletTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  privateWalletDesc: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  privateWalletBalancesCompact: {
+    fontSize: 12,
+    color: '#374151',
+  },
+  privateWalletRight: {
+    marginLeft: spacing.md,
+  },
+  pcErrorTextCard: {
+    ...typography.caption,
+    color: '#dc2626',
+    marginBottom: spacing.md,
+  },
+  pcErrorText: {
+    ...typography.caption,
+    color: colors.error,
+    marginBottom: spacing.sm,
+  },
+  monoBtn: {
+    backgroundColor: '#111827',
+    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  monoBtnCompact: {
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    minHeight: 40,
+  },
+  monoBtnSecondary: {
+    backgroundColor: '#f3f4f6',
+  },
+  monoBtnPressed: {
+    opacity: 0.9,
+  },
+  monoBtnDisabled: {
+    opacity: 0.5,
+  },
+  monoBtnText: {
+    ...typography.button,
+    color: '#fff',
+  },
+  monoBtnTextSecondary: {
+    ...typography.button,
+    fontSize: 14,
+    color: '#374151',
+  },
+  monoBtnTextDisabled: {
+    color: '#9ca3af',
+  },
+  payLinksSectionHeader: {
+    marginBottom: spacing.lg,
   },
   loading: {
     flex: 1,
@@ -380,7 +759,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.surfaceHover,
+    backgroundColor: 'rgba(255,255,255,0.4)',
   },
   emptyIconLineShort: {
     width: 20,
@@ -389,12 +768,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: '#fff',
     marginBottom: spacing.sm,
   },
   emptyDesc: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: 'rgba(255,255,255,0.85)',
     textAlign: 'center',
     lineHeight: 21,
     marginBottom: spacing.xl,
@@ -403,16 +782,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent,
+    backgroundColor: '#111827',
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: radius.full,
+    borderRadius: 12,
     gap: 8,
     marginTop: spacing.xl,
     alignSelf: 'center',
-    shadowColor: colors.accent,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 6,
   },
@@ -440,13 +819,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    backgroundColor: '#fff',
+    borderRadius: 20,
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
   cardPressed: {
-    opacity: 0.8,
+    opacity: 0.9,
   },
   cardLeft: {
     flex: 1,
@@ -459,7 +838,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.accent,
+    backgroundColor: '#7c3aed',
   },
   cardContent: {
     flex: 1,
@@ -467,12 +846,12 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     ...typography.mono,
-    color: colors.text,
+    color: '#111827',
     fontSize: 14,
   },
   cardMeta: {
     ...typography.caption,
-    color: colors.textMuted,
+    color: '#6b7280',
     marginTop: 2,
   },
   balances: {
@@ -482,7 +861,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   balanceBadge: {
-    backgroundColor: colors.accentDim,
+    backgroundColor: 'rgba(124, 58, 237, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -490,28 +869,127 @@ const styles = StyleSheet.create({
   balanceText: {
     ...typography.caption,
     fontSize: 11,
-    color: colors.accent,
+    color: '#7c3aed',
     fontWeight: '600',
   },
   copyBtn: {
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accentDim,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
     marginLeft: spacing.md,
   },
   copyBtnSuccess: {
-    backgroundColor: colors.successDim,
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
   },
   copyBtnPressed: {
     opacity: 0.8,
   },
   copyBtnText: {
     ...typography.caption,
-    color: colors.accent,
+    color: '#374151',
     fontSize: 13,
   },
   copyBtnTextSuccess: {
-    color: colors.success,
+    color: '#16a34a',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+  },
+  modalTitle: {
+    ...typography.title,
+    fontSize: 20,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  modalTokenRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  modalTokenBtn: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalTokenBtnActive: {
+    backgroundColor: colors.accentDim,
+    borderColor: colors.accent,
+  },
+  modalTokenBtnPressed: {
+    opacity: 0.8,
+  },
+  modalTokenBtnText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  modalTokenBtnTextActive: {
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  modalDesc: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  modalInput: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    ...typography.body,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  modalInputError: {
+    borderColor: colors.error,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  modalBtnPrimary: {
+    backgroundColor: colors.accent,
+  },
+  modalBtnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalBtnPressed: {
+    opacity: 0.7,
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
+  },
+  modalBtnTextPrimary: {
+    ...typography.button,
+    color: colors.text,
+  },
+  modalBtnTextSecondary: {
+    ...typography.button,
+    color: colors.textMuted,
   },
 });

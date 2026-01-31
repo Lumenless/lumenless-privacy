@@ -17,10 +17,35 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
-import { SOLANA_RPC_URL } from '../constants/solana';
+import { Buffer } from 'buffer';
+import { SOLANA_RPC_URL, PRIVACYCASH_CLAIMABLE_MINT_LIST } from '../constants/solana';
 import { TokenAccount } from './tokens';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+/** MWA returns account address as base64; convert to base58 for display and API use. */
+export function base64AddressToBase58(base64Address: string): string {
+  const bytes = Buffer.from(base64Address, 'base64');
+  return bs58.encode(bytes);
+}
+
+/** Tokens that can be claimed into PrivacyCash: SOL, USDC, USDT only */
+export function getClaimablePrivacyCashTokens(tokens: TokenAccount[]): TokenAccount[] {
+  const mints = new Set<string>(PRIVACYCASH_CLAIMABLE_MINT_LIST as unknown as string[]);
+  return tokens.filter((t) => mints.has(t.mint) && t.amount > 0);
+}
+
+export function hasClaimablePrivacyCashTokens(tokens: TokenAccount[]): boolean {
+  return getClaimablePrivacyCashTokens(tokens).length > 0;
+}
+
+/** Whether the pay link wallet has SOL (for gas). Used to decide fee payer when claiming into PrivacyCash. */
+export function payLinkHasSolForGas(tokens: TokenAccount[]): boolean {
+  const sol = tokens.find((t) => t.mint === SOL_MINT);
+  if (!sol || sol.amount <= 0) return false;
+  // Need at least ~0.001 SOL for a transaction
+  return sol.amount >= 0.001;
+}
 
 // Rent-exempt minimum for token accounts (in lamports)
 // This is the amount required to create an ATA
@@ -259,4 +284,49 @@ export async function claimAllTokens(
   }
   
   return result;
+}
+
+/** Result of claiming into PrivacyCash */
+export interface ClaimToPrivacyCashResult {
+  success: boolean;
+  signatures: string[];
+  error?: string;
+}
+
+const DERIVATION_MESSAGE = 'Privacy Money account sign in';
+
+/**
+ * Claim SOL, USDC, USDT from Pay Link wallet into user's PrivacyCash balance.
+ * - Fee payer: Pay Link wallet if it has SOL (>= 0.001), else user wallet.
+ * - User must connect wallet and sign the derivation message (and transaction when SDK is used).
+ * - Only SOL, USDC, USDT are supported for PrivacyCash deposit.
+ *
+ * PrivacyCash SDK (deposit) is not yet integrated on mobile; this is a stub.
+ * When SDK is available: call deposit() with payer = pay link keypair, recipient = user's encryption key + utxo.
+ */
+export async function claimToPrivacyCash(
+  _payLinkSecretKeyBase58: string,
+  _userPublicKey: string,
+  _userSignMessage: (message: Uint8Array) => Promise<Uint8Array>,
+  _userSignTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
+  claimableTokens: TokenAccount[],
+  payLinkHasSol: boolean
+): Promise<ClaimToPrivacyCashResult> {
+  if (claimableTokens.length === 0) {
+    return { success: false, signatures: [], error: 'No SOL, USDC, or USDT to claim' };
+  }
+
+  // Fee payer: Pay Link if it has SOL, else user
+  const feePayer = payLinkHasSol ? 'pay_link' : 'user';
+  console.log(`[ClaimToPrivacyCash] Fee payer: ${feePayer}`);
+
+  // TODO: Integrate @lumenless/privacycash on mobile (WASM, circuits, storage).
+  // Then: derive user encryption key from userSignMessage(DERIVATION_MESSAGE), get user UTXO,
+  // build deposit(s) from pay link to user's PrivacyCash balance, sign with pay link keypair,
+  // have user sign the deposit tx if required, submit.
+  return {
+    success: false,
+    signatures: [],
+    error: 'Claim into PrivacyCash on mobile is not yet available. Use the web app for now.',
+  };
 }
