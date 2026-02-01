@@ -358,29 +358,17 @@ export async function claimToPrivacyCash(
 
   // Step 2: Deposit each token directly from Pay Link to User's PrivacyCash
   for (const token of claimableTokens) {
-    // Determine token kind
-    type TokenKind = 'SOL' | 'USDC' | 'USDT';
-    let tokenKind: TokenKind;
-    let mint: string | undefined;
-    
-    if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL) {
-      tokenKind = 'SOL';
-    } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDC) {
-      tokenKind = 'USDC';
-      mint = PRIVACYCASH_CLAIMABLE_MINTS.USDC;
-    } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDT) {
-      tokenKind = 'USDT';
-      mint = PRIVACYCASH_CLAIMABLE_MINTS.USDT;
-    } else {
-      console.log(`[ClaimToPrivacyCash] Skipping unsupported token: ${token.symbol || token.mint}`);
+    // Only SOL is supported for now
+    if (token.mint !== PRIVACYCASH_CLAIMABLE_MINTS.SOL) {
+      console.log(`[ClaimToPrivacyCash] Skipping non-SOL token: ${token.symbol || token.mint}`);
       continue;
     }
 
-    // Amount in base units (lamports for SOL, smallest unit for SPL)
-    const amountBaseUnits = token.amount;
-    const humanAmount = amountBaseUnits / Math.pow(10, token.decimals);
+    // Amount in lamports
+    const amountLamports = token.amount;
+    const humanAmount = amountLamports / Math.pow(10, token.decimals);
     
-    console.log(`[ClaimToPrivacyCash] Direct deposit ${humanAmount} ${tokenKind} (${amountBaseUnits} base units)...`);
+    console.log(`[ClaimToPrivacyCash] Direct deposit ${humanAmount} SOL (${amountLamports} lamports)...`);
 
     try {
       const claimUrl = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/claim`;
@@ -389,14 +377,8 @@ export async function claimToPrivacyCash(
         userAddress: userPublicKey,
         signedMessageBase64,
         payLinkSecretKey: payLinkSecretKeyBase58,
+        amountLamports,
       };
-
-      if (tokenKind === 'SOL') {
-        requestBody.amountLamports = amountBaseUnits;
-      } else {
-        requestBody.mint = mint;
-        requestBody.amountBaseUnits = amountBaseUnits;
-      }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min for ZK proof
@@ -435,24 +417,22 @@ export async function claimToPrivacyCash(
 
       if (data.success && data.tx) {
         signatures.push(data.tx);
-        console.log(`[ClaimToPrivacyCash] ${tokenKind} direct deposit successful:`, data.tx);
+        console.log(`[ClaimToPrivacyCash] SOL direct deposit successful:`, data.tx);
       } else {
         throw new Error(data.error || 'Unknown error');
       }
 
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
-      errors.push(`${tokenKind}: ${errMsg}`);
-      console.error(`[ClaimToPrivacyCash] ${tokenKind} direct deposit error:`, err);
+      errors.push(`SOL: ${errMsg}`);
+      console.error(`[ClaimToPrivacyCash] SOL direct deposit error:`, err);
     }
   }
 
   // Return result
   const successCount = signatures.length;
   const totalCount = claimableTokens.filter(t => 
-    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL ||
-    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDC ||
-    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDT
+    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL
   ).length;
 
   if (successCount === 0) {

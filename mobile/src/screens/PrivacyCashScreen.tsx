@@ -42,9 +42,14 @@ export default function PrivacyCashScreen() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawError, setWithdrawError] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const handleConnectAndLoadBalance = useCallback(async () => {
-    setLoading(true);
+  const handleConnectAndLoadBalance = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
@@ -73,10 +78,13 @@ export default function PrivacyCashScreen() {
     } catch (err: unknown) {
       console.error('[PrivacyCash] connect/balance error:', err);
       setError(err instanceof Error ? err.message : 'Could not load balance. Connect your wallet and try again.');
-      setBalance(null);
-      setUserAddress(null);
+      if (!isRefresh) {
+        setBalance(null);
+        setUserAddress(null);
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -169,7 +177,8 @@ export default function PrivacyCashScreen() {
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   };
 
-  const tokens: TokenKind[] = ['SOL', 'USDC', 'USDT'];
+  // Only SOL is supported for now
+  const tokens: TokenKind[] = ['SOL'];
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl }]}>
@@ -178,7 +187,7 @@ export default function PrivacyCashScreen() {
           <Text style={styles.backBtnText}>← Back</Text>
         </Pressable>
         <Text style={styles.title}>My PrivacyCash</Text>
-        <Text style={styles.subtitle}>Private balance (SOL, USDC, USDT)</Text>
+        <Text style={styles.subtitle}>Private balance (SOL only for now)</Text>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -188,7 +197,7 @@ export default function PrivacyCashScreen() {
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
             <Pressable
               style={({ pressed }) => [styles.connectBtn, pressed && styles.connectBtnPressed]}
-              onPress={handleConnectAndLoadBalance}
+              onPress={() => handleConnectAndLoadBalance(false)}
               disabled={loading}
             >
               {loading ? <ActivityIndicator size="small" color={colors.text} /> : <Text style={styles.connectBtnText}>Connect wallet & load balance</Text>}
@@ -201,7 +210,20 @@ export default function PrivacyCashScreen() {
               <Text style={styles.addressValue} numberOfLines={1} ellipsizeMode="middle">{userAddress}</Text>
             </View>
             <View style={styles.balanceCard}>
-              <Text style={styles.balanceCardTitle}>Balance</Text>
+              <View style={styles.balanceCardHeader}>
+                <Text style={styles.balanceCardTitle}>Balance</Text>
+                <Pressable 
+                  style={({ pressed }) => [styles.refreshBtn, pressed && styles.refreshBtnPressed, refreshing && styles.refreshBtnDisabled]} 
+                  onPress={() => handleConnectAndLoadBalance(true)} 
+                  disabled={refreshing}
+                >
+                  {refreshing ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={styles.refreshBtnText}>↻ Refresh</Text>
+                  )}
+                </Pressable>
+              </View>
               {tokens.map((token) => {
                 const value = balance ? balance[token === 'SOL' ? 'sol' : token === 'USDC' ? 'usdc' : 'usdt'] : 0;
                 return (
@@ -219,9 +241,6 @@ export default function PrivacyCashScreen() {
                 );
               })}
             </View>
-            <Pressable style={({ pressed }) => [styles.refreshBtn, pressed && styles.refreshBtnPressed]} onPress={handleConnectAndLoadBalance} disabled={loading}>
-              <Text style={styles.refreshBtnText}>Refresh balance</Text>
-            </Pressable>
           </>
         )}
       </ScrollView>
@@ -347,10 +366,15 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     marginBottom: spacing.lg,
   },
+  balanceCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
   balanceCardTitle: {
     ...typography.subtitle,
     color: colors.text,
-    marginBottom: spacing.md,
   },
   balanceRow: {
     flexDirection: 'row',
@@ -388,15 +412,20 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
   refreshBtn: {
-    alignSelf: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    minWidth: 80,
+    alignItems: 'center',
   },
   refreshBtnPressed: {
     opacity: 0.7,
   },
+  refreshBtnDisabled: {
+    opacity: 0.5,
+  },
   refreshBtnText: {
     ...typography.body,
+    fontSize: 14,
     color: colors.accent,
   },
   errorText: {

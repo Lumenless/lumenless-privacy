@@ -127,11 +127,25 @@ export default function PayLinkDetailsScreen() {
     if (!hasClaimablePrivacyCashTokens(tokens)) {
       Alert.alert(
         'Nothing to claim',
-        'This pay link has no SOL, USDC, or USDT. Only these tokens can be claimed into PrivacyCash. Add one of them to your pay link first.',
+        'This pay link has no SOL. Only SOL can be claimed into PrivacyCash for now. Use "Claim publicly" for other tokens.',
         [{ text: 'OK' }]
       );
       return;
     }
+    
+    // Check if SOL balance is at least 0.008 SOL (8,000,000 lamports) for fees
+    const solToken = tokens.find(t => t.mint === 'So11111111111111111111111111111111111111112');
+    const MIN_SOL_FOR_CLAIM = 8_000_000; // 0.008 SOL in lamports
+    if (solToken && solToken.amount < MIN_SOL_FOR_CLAIM) {
+      const solBalance = solToken.amount / 1e9;
+      Alert.alert(
+        'Insufficient SOL',
+        `This pay link needs at least 0.008 SOL to claim into PrivacyCash (for transaction fees). Current balance: ${solBalance.toFixed(4)} SOL.\n\nUse "Claim publicly" instead, or add more SOL to this pay link.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
     setPrivacyCashModalVisible(true);
   };
 
@@ -595,7 +609,7 @@ export default function PayLinkDetailsScreen() {
           <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>Claim into PrivacyCash</Text>
             <Text style={styles.modalDesc}>
-              Only SOL, USDC, and USDT can be deposited into your PrivacyCash balance. Gas: Pay Link pays if it has SOL, otherwise your wallet pays.
+              Only SOL can be deposited into your PrivacyCash balance for now. Use "Claim publicly" for other tokens.
             </Text>
             {(() => {
               const claimable = getClaimablePrivacyCashTokens(tokens);
