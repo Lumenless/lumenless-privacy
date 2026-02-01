@@ -1,10 +1,12 @@
 {
   "functions": {
     "src/app/api/privacycash/claim/route.ts": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 3009
     },
     "src/app/api/privacycash/withdraw/route.ts": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 3009
     }
   }
 }
