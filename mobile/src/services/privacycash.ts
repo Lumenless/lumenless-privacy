@@ -135,3 +135,132 @@ export async function withdrawFromPrivacyCash(
     error: 'Withdraw on mobile is not yet available. Use the web app to withdraw.',
   };
 }
+
+// Token mint addresses
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+
+export type DepositResult = {
+  success: boolean;
+  tx?: string;
+  error?: string;
+};
+
+/**
+ * Deposit into PrivacyCash via the backend API.
+ * 
+ * Flow:
+ * 1. Sign the derivation message to get encryption keys
+ * 2. Call backend to build the deposit transaction (ZK proof generation)
+ * 3. Sign the transaction on mobile
+ * 4. Call backend again to submit to PrivacyCash relayer
+ * 
+ * @param token - Token to deposit (SOL, USDC, USDT)
+ * @param amount - Amount to deposit (in human units, e.g. 0.1 SOL)
+ * @param userPublicKey - User's wallet public key (base58)
+ * @param signMessage - Function to sign a message
+ * @param signTransaction - Function to sign a transaction (receives serialized tx, returns signed serialized tx)
+ */
+export async function depositToPrivacyCash(
+  token: TokenKind,
+  amount: number,
+  userPublicKey: string,
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>,
+  signTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
+): Promise<DepositResult> {
+  console.log('[PrivacyCash] deposit: start', { token, amount, address: userPublicKey.slice(0, 8) + '...' });
+
+  if (amount <= 0) {
+    return { success: false, error: 'Invalid amount' };
+  }
+
+  try {
+    // Step 1: Sign the derivation message
+    const messageBytes = new TextEncoder().encode(DERIVATION_MESSAGE);
+    console.log('[PrivacyCash] deposit: requesting signature for derivation message...');
+    const signature = await signMessage(messageBytes);
+    console.log('[PrivacyCash] deposit: derivation signature received');
+    
+    const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+    const signedMessageBase64 = Buffer.from(sigBytes).toString('base64');
+
+    // Step 2: Call backend to build the deposit transaction
+    const buildUrl = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/deposit`;
+    console.log('[PrivacyCash] deposit: building transaction via backend...');
+
+    // Convert amount to base units
+    const isSpl = token === 'USDC' || token === 'USDT';
+    const decimals = TOKEN_DECIMALS[token];
+    const baseUnits = Math.floor(amount * Math.pow(10, decimals));
+
+    const buildBody: Record<string, unknown> = {
+      address: userPublicKey,
+      signedMessageBase64,
+    };
+
+    if (isSpl) {
+      buildBody.mint = token === 'USDC' ? USDC_MINT : USDT_MINT;
+      buildBody.amountBaseUnits = baseUnits;
+    } else {
+      buildBody.amountLamports = baseUnits;
+    }
+
+    const buildRes = await fetch(buildUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildBody),
+    });
+
+    if (!buildRes.ok) {
+      const errorText = await buildRes.text();
+      console.error('[PrivacyCash] deposit: build error', buildRes.status, errorText);
+      return { success: false, error: `Failed to build transaction: ${errorText}` };
+    }
+
+    const buildData = await buildRes.json() as { transaction?: string; error?: string };
+    if (!buildData.transaction) {
+      return { success: false, error: buildData.error || 'No transaction returned from backend' };
+    }
+
+    console.log('[PrivacyCash] deposit: transaction built, signing...');
+
+    // Step 3: Sign the transaction on mobile
+    const txBytes = Buffer.from(buildData.transaction, 'base64');
+    const signedTxBytes = await signTransaction(new Uint8Array(txBytes));
+    const signedTransaction = Buffer.from(signedTxBytes).toString('base64');
+
+    console.log('[PrivacyCash] deposit: transaction signed, submitting to relayer...');
+
+    // Step 4: Submit to PrivacyCash relayer via backend
+    const submitRes = await fetch(buildUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signedTransaction,
+        address: userPublicKey,
+      }),
+    });
+
+    if (!submitRes.ok) {
+      const errorText = await submitRes.text();
+      console.error('[PrivacyCash] deposit: submit error', submitRes.status, errorText);
+      return { success: false, error: `Failed to submit transaction: ${errorText}` };
+    }
+
+    const submitData = await submitRes.json() as { tx?: string; success?: boolean; error?: string };
+    
+    if (submitData.success && submitData.tx) {
+      console.log('[PrivacyCash] deposit: success!', submitData.tx);
+      return { success: true, tx: submitData.tx };
+    }
+
+    return { success: false, error: submitData.error || 'Unknown error during submission' };
+
+  } catch (err) {
+    console.error('[PrivacyCash] deposit: error', err);
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : 'Deposit failed' 
+    };
+  }
+}

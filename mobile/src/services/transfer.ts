@@ -18,7 +18,7 @@ import {
 } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
-import { SOLANA_RPC_URL, PRIVACYCASH_CLAIMABLE_MINT_LIST } from '../constants/solana';
+import { SOLANA_RPC_URL, PRIVACYCASH_CLAIMABLE_MINT_LIST, PRIVACYCASH_CLAIMABLE_MINTS } from '../constants/solana';
 import { TokenAccount } from './tokens';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -293,40 +293,135 @@ export interface ClaimToPrivacyCashResult {
   error?: string;
 }
 
-const DERIVATION_MESSAGE = 'Privacy Money account sign in';
-
 /**
  * Claim SOL, USDC, USDT from Pay Link wallet into user's PrivacyCash balance.
- * - Fee payer: Pay Link wallet if it has SOL (>= 0.001), else user wallet.
- * - User must connect wallet and sign the derivation message (and transaction when SDK is used).
- * - Only SOL, USDC, USDT are supported for PrivacyCash deposit.
- *
- * PrivacyCash SDK (deposit) is not yet integrated on mobile; this is a stub.
- * When SDK is available: call deposit() with payer = pay link keypair, recipient = user's encryption key + utxo.
+ * 
+ * IMPORTANT: PrivacyCash deposits go into the USER's PrivacyCash balance, not the pay link's.
+ * This is because PrivacyCash uses the user's wallet signature to derive encryption keys.
+ * 
+ * Flow:
+ * 1. First, transfer tokens from Pay Link to User's regular wallet
+ * 2. Then, user deposits from their wallet into their PrivacyCash balance
+ * 
+ * The actual deposit is done via the backend API which handles ZK proof generation.
+ * 
+ * @param payLinkSecretKeyBase58 - Pay Link's secret key for signing transfers
+ * @param userPublicKey - User's wallet public key (destination for transfer, source for deposit)
+ * @param userSignMessage - Function to sign derivation message
+ * @param userSignTransaction - Function to sign deposit transaction
+ * @param claimableTokens - Tokens to claim (only SOL, USDC, USDT supported)
+ * @param _payLinkHasSol - Whether pay link has SOL for gas (transfer fees)
  */
 export async function claimToPrivacyCash(
-  _payLinkSecretKeyBase58: string,
-  _userPublicKey: string,
-  _userSignMessage: (message: Uint8Array) => Promise<Uint8Array>,
-  _userSignTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
+  payLinkSecretKeyBase58: string,
+  userPublicKey: string,
+  userSignMessage: (message: Uint8Array) => Promise<Uint8Array>,
+  userSignTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
   claimableTokens: TokenAccount[],
-  payLinkHasSol: boolean
+  _payLinkHasSol: boolean
 ): Promise<ClaimToPrivacyCashResult> {
   if (claimableTokens.length === 0) {
     return { success: false, signatures: [], error: 'No SOL, USDC, or USDT to claim' };
   }
 
-  // Fee payer: Pay Link if it has SOL, else user
-  const feePayer = payLinkHasSol ? 'pay_link' : 'user';
-  console.log(`[ClaimToPrivacyCash] Fee payer: ${feePayer}`);
+  console.log(`[ClaimToPrivacyCash] Starting claim for ${claimableTokens.length} token(s) to ${userPublicKey.slice(0, 8)}...`);
 
-  // TODO: Integrate @lumenless/privacycash on mobile (WASM, circuits, storage).
-  // Then: derive user encryption key from userSignMessage(DERIVATION_MESSAGE), get user UTXO,
-  // build deposit(s) from pay link to user's PrivacyCash balance, sign with pay link keypair,
-  // have user sign the deposit tx if required, submit.
-  return {
-    success: false,
-    signatures: [],
-    error: 'Claim into PrivacyCash on mobile is not yet available. Use the web app for now.',
-  };
+  // Import the deposit function from privacycash service
+  const { depositToPrivacyCash } = await import('./privacycash');
+  type TokenKind = 'SOL' | 'USDC' | 'USDT';
+
+  const signatures: string[] = [];
+  const errors: string[] = [];
+
+  // Step 1: Transfer tokens from Pay Link to User's wallet
+  console.log('[ClaimToPrivacyCash] Step 1: Transferring tokens from Pay Link to user wallet...');
+  
+  try {
+    const claimResult = await claimAllTokens(payLinkSecretKeyBase58, userPublicKey, claimableTokens);
+    
+    // Check if transfer had failures
+    if (claimResult.failedTransfers > 0 && claimResult.successfulTransfers === 0) {
+      return { 
+        success: false, 
+        signatures: claimResult.signatures, 
+        error: `Transfer failed: ${claimResult.errors.join('; ') || 'Unknown error'}` 
+      };
+    }
+    
+    signatures.push(...claimResult.signatures);
+    console.log('[ClaimToPrivacyCash] Transfer complete, signatures:', claimResult.signatures);
+    
+    // Small delay to let the transfer confirm
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  } catch (err) {
+    console.error('[ClaimToPrivacyCash] Transfer error:', err);
+    return { 
+      success: false, 
+      signatures, 
+      error: `Transfer failed: ${err instanceof Error ? err.message : 'Unknown error'}` 
+    };
+  }
+
+  // Step 2: Deposit each token into PrivacyCash
+  console.log('[ClaimToPrivacyCash] Step 2: Depositing tokens into PrivacyCash...');
+  
+  for (const token of claimableTokens) {
+    // Determine token kind
+    let tokenKind: TokenKind;
+    if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL) {
+      tokenKind = 'SOL';
+    } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDC) {
+      tokenKind = 'USDC';
+    } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDT) {
+      tokenKind = 'USDT';
+    } else {
+      console.log(`[ClaimToPrivacyCash] Skipping unsupported token: ${token.symbol || token.mint}`);
+      continue;
+    }
+
+    // Convert amount from raw units to human-readable units
+    const humanAmount = token.amount / Math.pow(10, token.decimals);
+    console.log(`[ClaimToPrivacyCash] Depositing ${humanAmount} ${tokenKind} into PrivacyCash...`);
+
+    try {
+      const depositResult = await depositToPrivacyCash(
+        tokenKind,
+        humanAmount,
+        userPublicKey,
+        userSignMessage,
+        userSignTransaction
+      );
+
+      if (depositResult.success && depositResult.tx) {
+        signatures.push(depositResult.tx);
+        console.log(`[ClaimToPrivacyCash] ${tokenKind} deposit successful:`, depositResult.tx);
+      } else {
+        errors.push(`${tokenKind}: ${depositResult.error || 'Unknown error'}`);
+        console.error(`[ClaimToPrivacyCash] ${tokenKind} deposit failed:`, depositResult.error);
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      errors.push(`${tokenKind}: ${errMsg}`);
+      console.error(`[ClaimToPrivacyCash] ${tokenKind} deposit error:`, err);
+    }
+  }
+
+  // Return result
+  if (errors.length > 0 && signatures.length === claimableTokens.length) {
+    // Partial success - transfer worked but some deposits failed
+    return {
+      success: true,
+      signatures,
+      error: `Some deposits failed: ${errors.join('; ')}`,
+    };
+  } else if (errors.length === claimableTokens.length) {
+    // All deposits failed
+    return {
+      success: false,
+      signatures,
+      error: errors.join('; '),
+    };
+  }
+
+  return { success: true, signatures };
 }
