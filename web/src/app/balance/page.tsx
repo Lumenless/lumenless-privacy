@@ -277,7 +277,7 @@ function BalanceView() {
         >
           <h1 className="text-4xl font-bold text-white mb-4">PrivacyCash Balance</h1>
           <p className="text-gray-400">
-            View and withdraw your private balance (including pay link deposits).
+            View and withdraw your private balance (including invoice deposits).
           </p>
         </motion.div>
 
@@ -290,7 +290,7 @@ function BalanceView() {
                 Your Balance
               </CardTitle>
               <CardDescription className="text-gray-400">
-                Private SOL balance from deposits and pay links
+                Private SOL balance from deposits and invoices
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -316,7 +316,7 @@ export default function PayLinksScreen() {
       onPress={handleOpenCreateModal}
     >
       <Text style={styles.createBtnIcon}>+</Text>
-      <Text style={styles.createBtnLabel}>Create pay link</Text>
+      <Text style={styles.createBtnLabel}>Create invoice</Text>
     </Pressable>
   );
 
@@ -396,7 +396,7 @@ export default function PayLinksScreen() {
         <View style={[styles.emptyIconLine, styles.emptyIconLineShort]} />
         <View style={styles.emptyIconLine} />
       </View>
-      <Text style={styles.emptyTitle}>No pay links yet</Text>
+      <Text style={styles.emptyTitle}>No invoices yet</Text>
       <Text style={styles.emptyDesc}>
         Create a link to receive payments. Share it with anyone—they pay, you receive.
       </Text>
@@ -458,7 +458,7 @@ export default function PayLinksScreen() {
       </View>
 
       <View style={styles.payLinksSectionHeader}>
-        <Text style={styles.sectionTitle}>Pay links</Text>
+        <Text style={styles.sectionTitle}>Invoices</Text>
         {hiddenCount > 0 && !showingHidden && (
           <Pressable
             style={({ pressed }) => [styles.showHiddenBtn, pressed && styles.showHiddenBtnPressed]}

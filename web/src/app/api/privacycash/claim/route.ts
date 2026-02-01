@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
     
     if (actualDepositAmount <= 0) {
       return NextResponse.json({ 
-        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports. Need to keep ${DEPOSIT_RESERVE} lamports (0.008 SOL) for fees.` 
+        error: `Insufficient balance in invoice: ${payLinkBalance} lamports. Need to keep ${DEPOSIT_RESERVE} lamports (0.008 SOL) for fees.` 
       }, { status: 400 });
     }
     

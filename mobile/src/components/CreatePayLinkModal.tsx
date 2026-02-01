@@ -65,7 +65,7 @@ export default function CreatePayLinkModal({
             },
           ]}
         >
-          <Text style={styles.heading}>New pay link</Text>
+          <Text style={styles.heading}>New invoice</Text>
           <Text style={styles.hint}>Add an optional title to identify this link.</Text>
 
           <TextInput

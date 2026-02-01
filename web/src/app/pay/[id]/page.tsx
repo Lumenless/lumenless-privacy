@@ -533,9 +533,9 @@ function PayView() {
                   <div className="flex items-start gap-3">
                     <span className="text-2xl">⚠️</span>
                     <div>
-                      <p className="text-red-400 font-medium">Invalid Pay Link</p>
+                      <p className="text-red-400 font-medium">Invalid Invoice</p>
                       <p className="text-gray-400 text-sm mt-1">
-                        This pay link appears to be invalid or from an older version. 
+                        This invoice appears to be invalid or from an older version. 
                         Please ask the recipient for a new link.
                       </p>
                     </div>
@@ -676,7 +676,7 @@ function PayView() {
           </Card>
         </motion.div>
 
-        {/* Back to Pay Links */}
+        {/* Back to Invoices */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -687,7 +687,7 @@ function PayView() {
             href="/pay-links"
             className="text-gray-400 hover:text-white transition-colors text-sm flex items-center gap-2"
           >
-            ← Create your own pay link
+            ← Create your own invoice
           </a>
         </motion.div>
       </main>

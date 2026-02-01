@@ -127,7 +127,7 @@ export default function PayLinkDetailsScreen() {
     if (!hasClaimablePrivacyCashTokens(tokens)) {
       Alert.alert(
         'Nothing to claim',
-        'This pay link has no SOL. Only SOL can be claimed into PrivacyCash for now. Use "Claim publicly" for other tokens.',
+        'This invoice has no SOL. Only SOL can be claimed into PrivacyCash for now. Use "Claim publicly" for other tokens.',
         [{ text: 'OK' }]
       );
       return;
@@ -140,7 +140,7 @@ export default function PayLinkDetailsScreen() {
       const solBalance = solToken.amount / 1e9;
       Alert.alert(
         'Insufficient SOL',
-        `This pay link needs at least 0.008 SOL to claim into PrivacyCash (for transaction fees). Current balance: ${solBalance.toFixed(4)} SOL.\n\nUse "Claim publicly" instead, or add more SOL to this pay link.`,
+        `This invoice needs at least 0.008 SOL to claim into PrivacyCash (for transaction fees). Current balance: ${solBalance.toFixed(4)} SOL.\n\nUse "Claim publicly" instead, or add more SOL to this invoice.`,
         [{ text: 'OK' }]
       );
       return;
@@ -417,14 +417,14 @@ export default function PayLinkDetailsScreen() {
       <View style={styles.emptyIconContainer}>
         <Logo width={80} height={80} color={colors.text} />
       </View>
-      <Text style={styles.emptyTitle}>This pay link is empty</Text>
+      <Text style={styles.emptyTitle}>This invoice is empty</Text>
       <Text style={styles.emptyDesc}>
         No tokens have been received yet. Share the link to start receiving payments.
       </Text>
     </View>
   );
 
-  const title = payLink.label?.trim() || 'Payment link';
+  const title = payLink.label?.trim() || 'Invoice';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -742,7 +742,7 @@ export default function PayLinkDetailsScreen() {
           <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>Backup wallet</Text>
             <Text style={styles.modalDesc}>
-              This is the private key for this pay link wallet. Keep it safe and never share it with anyone.
+              This is the private key for this invoice wallet. Keep it safe and never share it with anyone.
             </Text>
             
             <View style={styles.privateKeyContainer}>

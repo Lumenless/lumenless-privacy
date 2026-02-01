@@ -256,15 +256,15 @@ function PayLinksView() {
           className="text-center mb-12"
         >
           <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
-            Pay Links
+            Invoices
           </h1>
           <p className="text-lg text-gray-400 max-w-xl mx-auto">
-            Create private payment links. Receive SOL directly to your PrivacyCash balance without revealing your wallet address.
+            Create private invoices. Receive SOL directly to your PrivacyCash balance without revealing your wallet address.
           </p>
         </motion.div>
 
         <div className="w-full max-w-2xl space-y-6">
-          {/* Create Pay Link Card */}
+          {/* Create Invoice Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -274,22 +274,22 @@ function PayLinksView() {
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <span className="text-2xl">🔗</span>
-                  Create Pay Link
+                  Create Invoice
                 </CardTitle>
                 <CardDescription className="text-gray-400">
-                  Generate a unique payment link to receive private payments
+                  Generate a unique invoice link to receive private payments
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {!connected ? (
                   <div className="text-center py-8">
-                    <p className="text-gray-400 mb-4">Connect your wallet to create a pay link</p>
+                    <p className="text-gray-400 mb-4">Connect your wallet to create an invoice</p>
                     <WalletButton />
                   </div>
                 ) : payLinkData ? (
                   <div className="space-y-4">
                     <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-                      <label className="text-sm text-gray-400 mb-2 block">Your Pay Link</label>
+                      <label className="text-sm text-gray-400 mb-2 block">Your Invoice Link</label>
                       <div className="flex items-center gap-2">
                         <Input
                           value={payLink || ''}
@@ -325,14 +325,14 @@ function PayLinksView() {
                       className="w-full border-white/20 text-gray-400 hover:bg-white/5 hover:text-white"
                       disabled={isDerivingKey}
                     >
-                      {isDerivingKey ? 'Regenerating...' : 'Regenerate Pay Link'}
+                      {isDerivingKey ? 'Regenerating...' : 'Regenerate Invoice'}
                     </Button>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                       <p className="text-gray-400 text-sm">
-                        Create your unique pay link by signing a message. This derives your private receiving keys 
+                        Create your unique invoice by signing a message. This derives your private receiving keys 
                         from your wallet - the signature never leaves your device.
                       </p>
                     </div>
@@ -354,10 +354,10 @@ function PayLinksView() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
-                          Creating Pay Link...
+                          Creating Invoice...
                         </span>
                       ) : (
-                        'Create Pay Link'
+                        'Create Invoice'
                       )}
                     </Button>
                   </div>
@@ -386,7 +386,7 @@ function PayLinksView() {
                       1
                     </div>
                     <div>
-                      <p className="text-white font-medium">Create Your Pay Link</p>
+                      <p className="text-white font-medium">Create Your Invoice</p>
                       <p className="text-gray-400 text-sm">Sign a message to derive your unique receiving keys. Share the generated link with anyone who wants to pay you.</p>
                     </div>
                   </div>
