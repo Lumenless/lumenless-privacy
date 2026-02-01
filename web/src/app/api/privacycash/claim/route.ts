@@ -295,28 +295,35 @@ export async function POST(request: NextRequest) {
 
     // Check actual Pay Link balance and adjust amount if needed
     const payLinkBalance = await connection.getBalance(payLinkKeypair.publicKey);
-    // Reserve ~0.002 SOL for transaction fees (rent + compute)
-    const FEE_RESERVE = 2_000_000; // 0.002 SOL
+    
+    // Get the rent-exempt minimum for the account
+    const rentExemptMin = await connection.getMinimumBalanceForRentExemption(0);
+    
+    // Reserve: rent-exempt minimum + transaction fees (~10,000 lamports for safety)
+    const TX_FEE_BUFFER = 10_000; // ~0.00001 SOL for transaction fee
+    const FEE_RESERVE = rentExemptMin + TX_FEE_BUFFER;
     const maxDepositAmount = payLinkBalance - FEE_RESERVE;
     
     console.log('[Claim API] Pay Link balance:', payLinkBalance, 'lamports');
+    console.log('[Claim API] Rent-exempt minimum:', rentExemptMin, 'lamports');
+    console.log('[Claim API] Fee reserve (rent + tx fee):', FEE_RESERVE, 'lamports');
     console.log('[Claim API] Requested amount:', amountLamports, 'lamports');
-    console.log('[Claim API] Max deposit amount (after fee reserve):', maxDepositAmount, 'lamports');
+    console.log('[Claim API] Max deposit amount:', maxDepositAmount, 'lamports');
     
     // Use the smaller of requested amount or available balance
     const actualDepositAmount = Math.min(amountLamports!, maxDepositAmount);
     
     if (actualDepositAmount <= 0) {
       return NextResponse.json({ 
-        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports (need at least ${FEE_RESERVE} for fees)` 
+        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports. Need to keep ${FEE_RESERVE} for rent + fees.` 
       }, { status: 400 });
     }
     
     // If significantly less than requested, warn in logs
     if (actualDepositAmount < amountLamports! * 0.95) {
       console.log('[Claim API] Warning: Depositing less than requested due to balance constraints');
-      console.log('[Claim API] Actual deposit amount:', actualDepositAmount, 'lamports');
     }
+    console.log('[Claim API] Actual deposit amount:', actualDepositAmount, 'lamports');
 
     // Ensure circuit files are available on filesystem (snarkjs needs file paths, not URLs)
     console.log('[Claim API] Step 7: Ensuring circuit files...');
