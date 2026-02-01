@@ -15,7 +15,7 @@ function getBaseUrl(request: NextRequest): string {
   const host = request.headers.get('host') || request.headers.get('x-forwarded-host');
   const proto = request.headers.get('x-forwarded-proto') || 'https';
   if (host) return `${proto === 'https' ? 'https' : 'http'}://${host}`;
-  return process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+  return process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://lumenless.com';
 }
 
 /** In-memory storage for getUtxos (SDK requires full Storage interface). */
