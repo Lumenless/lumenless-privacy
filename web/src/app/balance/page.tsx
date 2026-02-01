@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,7 +81,7 @@ function BalanceView() {
       const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
       
       // Import SDK utilities
-      const sdkUtils = await import('@lumenless/privacycash/utils');
+      const sdkUtils = await import('privacycash/utils');
       const { EncryptionService, getUtxos, getBalanceFromUtxos } = sdkUtils;
       
       // Import hasher module
@@ -94,7 +95,7 @@ function BalanceView() {
           sisd: fetch('/light_wasm_hasher_bg.wasm'),
         }
       });
-      const lightWasm = wasmModule.create();
+      void wasmModule.create(); // WASM must be initialized for getUtxos
       
       // Set up encryption service
       const encryptionService = new EncryptionService();
@@ -167,7 +168,7 @@ function BalanceView() {
       const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
       
       // Import SDK utilities
-      const sdkUtils = await import('@lumenless/privacycash/utils');
+      const sdkUtils = await import('privacycash/utils');
       const { EncryptionService, withdraw } = sdkUtils;
       
       // Import hasher module
@@ -256,10 +257,10 @@ function BalanceView() {
       {/* Header */}
       <header className="relative z-10 border-b border-white/10 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
             <Image src="/logo.svg" alt="Lumenless Logo" width={32} height={32} />
             <span className="text-xl font-semibold text-white">Lumenless</span>
-          </a>
+          </Link>
           <WalletButton />
         </div>
       </header>

@@ -12,7 +12,7 @@ import {
 } from '@solana-name-service/sns-sdk-kit';
 
 // Import Metaplex service for token metadata
-import { findMetadataPda, fetchTokenMetadataBatch, fetchToken2022MetadataBatch, TOKEN_METADATA_PROGRAM_ID } from './metaplex-service';
+import { findMetadataPda, fetchTokenMetadataBatch, fetchToken2022MetadataBatch } from './metaplex-service';
 
 // Type for RPC (return type of createSolanaRpc)
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
@@ -1130,7 +1130,7 @@ export function useVaultBalance(
             logoUri: metadata?.logoURI,
           });
         }
-      } catch (err) {
+      } catch {
         console.log('[useVaultBalance] Token-2022 query failed, continuing');
       }
       

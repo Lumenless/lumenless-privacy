@@ -114,7 +114,7 @@ function PayLinksView() {
       const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
       
       // Import SDK utilities - use /utils export to avoid node-localstorage issues
-      const sdkUtils = await import('@lumenless/privacycash/utils');
+      const sdkUtils = await import('privacycash/utils');
       const { EncryptionService } = sdkUtils;
       
       // Import hasher module

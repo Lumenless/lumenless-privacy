@@ -488,7 +488,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mintAddress, isSecuredProp, onWrapSuccess: _onWrapSuccess }: { 
+function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mintAddress, isSecuredProp, onWrapSuccess }: { 
   domain: string; 
   pubkey: string | ReturnType<typeof address>; 
   isWrapped: boolean; 
@@ -498,13 +498,15 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
   isSecuredProp?: boolean; // Whether this domain is already known to be secured
   onWrapSuccess?: () => void;
 }) {
+  void onWrapSuccess; // reserved for future use
   // Create RPC endpoint
   const endpoint = useMemo(() => {
     const customRpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
     return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [, setIsWrapping] = useState(false);
+  const [isWrapping, setIsWrapping] = useState(false);
+  void setIsWrapping; // reserved for future wrap UI
   const [isSecuring, setIsSecuring] = useState(false);
   const [isUnsecuring, setIsUnsecuring] = useState(false);
   // Initialize with the prop value if provided (from vault fetch)
@@ -1248,12 +1250,13 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
         return;
       }
       
-      // Count how many tokens will be initialized
-      const _tokensToCreate = DEFAULT_VAULT_TOKENS
+      // Count how many tokens will be initialized (for future display)
+      const tokensToCreate = DEFAULT_VAULT_TOKENS
         .filter((_, i) => transaction.instructions.some(ix => 
           ix.keys.some(k => k.pubkey.equals(tokenMints[i]))
         ))
         .map(t => t.symbol);
+      void tokensToCreate;
       
       transaction.feePayer = ownerPubkey;
       

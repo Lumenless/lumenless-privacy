@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,7 +70,7 @@ function PayView() {
   const params = useParams();
   const encodedData = params.id as string;
   
-  const { connected, select } = useConnector();
+  const { connected } = useConnector();
   const { account } = useAccount();
   const { signer } = useTransactionSigner();
   const ownerAddress = useMemo(() => account?.address || null, [account]);
@@ -164,7 +165,7 @@ function PayView() {
       
       // Import SDK utilities - use /utils export to avoid node-localstorage issues
       setProgressMessage('Initializing PrivacyCash...');
-      const sdkUtils = await import('@lumenless/privacycash/utils');
+      const sdkUtils = await import('privacycash/utils');
       const { deposit, EncryptionService } = sdkUtils;
       
       // Import hasher module
@@ -240,8 +241,9 @@ function PayView() {
     }
   }, [signer, ownerAddress, isValidLink, payLinkData, amount, endpoint]);
 
-  // Handle direct SOL transfer to wallet address
-  const handleFundWallet = useCallback(async () => {
+  // Handle direct SOL transfer to wallet address (reserved for future use)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _handleFundWallet = useCallback(async () => {
     if (!signer || !ownerAddress) {
       setError('Please connect your wallet first');
       return;
@@ -356,10 +358,10 @@ function PayView() {
           <div className="flex flex-col md:flex-row min-h-[420px]">
             {/* Left panel: Recipient / campaign info */}
             <div className="md:w-[45%] p-8 md:p-10 flex flex-col bg-gray-50/80">
-              <a href="/" className="flex items-center gap-2 mb-8">
+              <Link href="/" className="flex items-center gap-2 mb-8">
                 <Image src="/logo.svg" alt="Lumenless" width={28} height={28} />
                 <span className="font-semibold text-gray-800 text-lg">Lumenless</span>
-              </a>
+              </Link>
               <div className="flex-1 flex flex-col justify-center">
                 <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-2">
                   Fund this wallet
@@ -445,10 +447,10 @@ function PayView() {
 
       {/* Header */}
       <header className="relative z-10 flex items-center justify-between px-4 md:px-8 py-4 border-b border-white/10">
-        <a href="/" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <Image src="/logo.svg" alt="Lumenless Logo" width={36} height={36} className="brightness-0 invert" />
           <span className="font-semibold text-lg text-white">Lumenless</span>
-        </a>
+        </Link>
         <WalletButton />
       </header>
 
