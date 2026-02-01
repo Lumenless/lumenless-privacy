@@ -123,13 +123,16 @@ export async function POST(request: NextRequest) {
       '→ User', userAddress.slice(0, 8),
       isSplDeposit ? `SPL ${mint} ${amountBaseUnits}` : `SOL ${amountLamports}`);
 
+    console.log('[Claim API] Step 1: Loading SDK...');
     // Load the forked SDK with recipientUtxoPubkey support
     // Using @lumenless/privacycash instead of privacycash
     const sdk = await import('@lumenless/privacycash/utils');
     const { EncryptionService, deposit, depositSPL } = sdk;
     const hasherModule = await import('@lightprotocol/hasher.rs');
     const { WasmFactory } = hasherModule;
+    console.log('[Claim API] Step 1: SDK loaded');
 
+    console.log('[Claim API] Step 2: Loading WASM...');
     // Load WASM
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let wasmModule: { create: () => any };
@@ -140,7 +143,9 @@ export async function POST(request: NextRequest) {
           sisd: fetch(`${baseUrl}/light_wasm_hasher_bg.wasm`),
         },
       });
+      console.log('[Claim API] Step 2: WASM loaded via fetch');
     } catch (fetchErr) {
+      console.log('[Claim API] Step 2: Fetch failed, trying filesystem...', fetchErr);
       try {
         const fsWasm = await loadWasmFromFs();
         wasmModule = await WasmFactory.loadModule({
@@ -149,18 +154,23 @@ export async function POST(request: NextRequest) {
             sisd: new Response(fsWasm.sisd),
           },
         });
+        console.log('[Claim API] Step 2: WASM loaded via filesystem');
       } catch (fsErr) {
         console.error('[Claim API] WASM load failed:', fetchErr, fsErr);
-        throw fetchErr;
+        throw new Error(`WASM load failed: ${fetchErr instanceof Error ? fetchErr.message : 'Unknown'}`);
       }
     }
     const lightWasm = wasmModule.create();
+    console.log('[Claim API] Step 2: WASM instance created');
 
+    console.log('[Claim API] Step 3: Deriving user encryption keys...');
     // Step 1: Derive USER's UTXO pubkey and encryption key from their signature
     // This determines which PrivacyCash account receives the funds
     const userEncryptionService = new EncryptionService();
     userEncryptionService.deriveEncryptionKeyFromSignature(userSigBytes);
+    console.log('[Claim API] Step 3: User encryption keys derived');
     
+    console.log('[Claim API] Step 4: Creating UTXO keypair for recipient...');
     // Get user's receiving keys
     const { UtxoKeypair } = await import('@lumenless/privacycash/utils');
     const userUtxoPrivateKey = userEncryptionService.getUtxoPrivateKeyV2();
@@ -171,26 +181,29 @@ export async function POST(request: NextRequest) {
     const recipientEncryptionKeyHex = userEncryptionService.getPayLinkPublicKey();
     const recipientEncryptionKey = Buffer.from(recipientEncryptionKeyHex, 'hex');
 
-    console.log('[Claim API] User UTXO pubkey:', recipientUtxoPubkey.slice(0, 16) + '...');
-    console.log('[Claim API] User encryption key:', recipientEncryptionKeyHex.slice(0, 16) + '...');
+    console.log('[Claim API] Step 4: User UTXO pubkey:', recipientUtxoPubkey.slice(0, 16) + '...');
+    console.log('[Claim API] Step 4: User encryption key:', recipientEncryptionKeyHex.slice(0, 16) + '...');
 
+    console.log('[Claim API] Step 5: Creating Pay Link encryption service...');
     // Step 2: Create encryption service for Pay Link (just for the deposit process)
     // The Pay Link doesn't need to derive keys from a signature - we just need a dummy service
     // because the SDK requires one, but we're using recipientUtxoPubkey instead
     const payLinkEncryptionService = new EncryptionService();
     // Derive from the pay link's keypair secret
     payLinkEncryptionService.deriveEncryptionKeyFromWallet(payLinkKeypair);
+    console.log('[Claim API] Step 5: Pay Link encryption service created');
 
     const connection = new Connection(endpoint, 'confirmed');
     const storage = makeMemoryStorage();
 
     // Transaction signer - signs with Pay Link keypair
     const transactionSigner = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
+      console.log('[Claim API] Signing transaction with Pay Link keypair...');
       tx.sign([payLinkKeypair]);
       return tx;
     };
 
-    console.log('[Claim API] Executing direct deposit with recipient keys...');
+    console.log('[Claim API] Step 6: Executing direct deposit with recipient keys...');
 
     // SPL direct deposit not yet supported - need to add recipientUtxoPubkey to depositSPL
     if (isSplDeposit) {
