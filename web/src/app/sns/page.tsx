@@ -143,7 +143,6 @@ import {
   isDomainSecured,
   buildDepositTransaction,
   buildWithdrawTransaction,
-  buildDepositUnwrappedTransaction,
   buildWithdrawUnwrappedTransaction,
   buildDepositWithRecordTransaction,
 } from '@/lib/vault-service';
@@ -489,7 +488,7 @@ function EditSolRecordModal({ visible, onClose, domain, currentAddress, onSucces
   );
 }
 
-function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mintAddress, isSecuredProp, onWrapSuccess }: { 
+function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mintAddress, isSecuredProp, onWrapSuccess: _onWrapSuccess }: { 
   domain: string; 
   pubkey: string | ReturnType<typeof address>; 
   isWrapped: boolean; 
@@ -505,7 +504,7 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
     return customRpc || 'https://api.mainnet-beta.solana.com';
   }, []);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [isWrapping, setIsWrapping] = useState(false);
+  const [, setIsWrapping] = useState(false);
   const [isSecuring, setIsSecuring] = useState(false);
   const [isUnsecuring, setIsUnsecuring] = useState(false);
   // Initialize with the prop value if provided (from vault fetch)
@@ -675,7 +674,7 @@ function DomainItem({ domain, pubkey, isWrapped, isSubdomain, parentDomain, mint
     } finally {
       setIsSecuring(false);
     }
-  }, [account?.address, mintAddress, isWrapped, pubkey, signTransaction, endpoint, queryClient]);
+  }, [account?.address, domain, mintAddress, isWrapped, pubkey, signTransaction, endpoint, queryClient]);
 
   // Handle unsecuring a domain (withdraw from vault)
   const handleUnsecureDomain = useCallback(async () => {
@@ -1157,11 +1156,13 @@ function TokenIcon({ logoUri, symbol, size = 32 }: { logoUri?: string; symbol?: 
   }
   
   return (
-    <img
+    <Image
       src={logoUri}
       alt={symbol || 'Token'}
+      width={size}
+      height={size}
       className="rounded-full object-cover"
-      style={{ width: size, height: size }}
+      unoptimized
       onError={() => setImgError(true)}
     />
   );
@@ -1248,7 +1249,7 @@ function VaultBalanceCard({ endpoint, ownerAddress }: { endpoint: string; ownerA
       }
       
       // Count how many tokens will be initialized
-      const tokensToCreate = DEFAULT_VAULT_TOKENS
+      const _tokensToCreate = DEFAULT_VAULT_TOKENS
         .filter((_, i) => transaction.instructions.some(ix => 
           ix.keys.some(k => k.pubkey.equals(tokenMints[i]))
         ))

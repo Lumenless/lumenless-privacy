@@ -4,6 +4,7 @@ import { useConnector, useAccount } from '@solana/connector';
 import { Button } from '@/components/ui/button';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Image from 'next/image';
 
 export function WalletButton() {
   const { select, disconnect, connected, wallets, connecting } = useConnector();
@@ -83,10 +84,13 @@ export function WalletButton() {
                       tabIndex={0}
                     >
                       {walletInfo.wallet.icon && (
-                        <img
+                        <Image
                           src={walletInfo.wallet.icon}
                           alt={walletInfo.wallet.name}
+                          width={40}
+                          height={40}
                           className="w-10 h-10 rounded-lg"
+                          unoptimized
                         />
                       )}
                       <span className="text-base font-medium text-gray-900 dark:text-gray-100">

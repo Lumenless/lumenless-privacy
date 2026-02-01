@@ -99,7 +99,7 @@ async function fetchOffChainMetadata(uri: string): Promise<OffChainMetadata | nu
     
     const json = await response.json();
     return json as OffChainMetadata;
-  } catch (err) {
+  } catch (_err) {
     // Silently fail for off-chain metadata - it's optional
     return null;
   }
@@ -276,7 +276,7 @@ export async function fetchTokenMetadataBatch(
         if (fetchImages && uri) {
           urisToFetch.push({ mint: mintStr, uri });
         }
-      } catch (err) {
+      } catch (_err) {
         console.log(`[MetaplexService] Could not parse metadata for ${mintStr}`);
       }
     }

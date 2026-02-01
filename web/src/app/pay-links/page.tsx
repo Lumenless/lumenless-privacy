@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -238,10 +239,10 @@ function PayLinksView() {
 
       {/* Header */}
       <header className="relative z-10 flex items-center justify-between px-4 md:px-8 py-4 border-b border-white/10">
-        <a href="/" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <Image src="/logo.svg" alt="Lumenless Logo" width={36} height={36} className="brightness-0 invert" />
           <span className="font-semibold text-lg text-white">Lumenless</span>
-        </a>
+        </Link>
         <WalletButton />
       </header>
 
