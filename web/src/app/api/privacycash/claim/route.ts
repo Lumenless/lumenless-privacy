@@ -299,29 +299,39 @@ export async function POST(request: NextRequest) {
     // Get the rent-exempt minimum for the account
     const rentExemptMin = await connection.getMinimumBalanceForRentExemption(0);
     
-    // The PrivacyCash program holds back exactly (balance * 0.0956) for internal operations
-    // Based on observed behavior: 20,010,000 balance → 18,097,960 available = 1,912,040 held
-    // This is approximately 9.56% of the balance, or ~2.15x rent-exempt minimum
-    // To be safe, we reserve: balance * 0.10 (10%) or 2.5x rent-exempt, whichever is larger
-    const percentReserve = Math.floor(payLinkBalance * 0.10);
-    const rentBasedReserve = Math.floor(rentExemptMin * 2.5);
-    const FEE_RESERVE = Math.max(percentReserve, rentBasedReserve);
-    const maxDepositAmount = payLinkBalance - FEE_RESERVE;
+    // The PrivacyCash program does multiple internal transfers during deposit.
+    // Empirically observed: with 20,010,000 balance, only 18,097,960 is transferable.
+    // The held amount (1,912,040) is approximately:
+    // - rent-exempt (890,880) + ~1,021,160 for internal operations
+    // 
+    // To calculate safely:
+    // Available = balance - rent_exempt - (balance * 0.05) - 5000 (tx fee buffer)
+    // This gives ~5% margin plus rent plus tx fees
+    const txFeeBuffer = 5_000;
+    const safetyMargin = Math.floor(payLinkBalance * 0.05); // 5% safety margin
+    const totalReserve = rentExemptMin + safetyMargin + txFeeBuffer;
+    
+    // Additionally cap to not exceed the known available ratio
+    // From testing: available ≈ balance * 0.904 (90.4% of balance is usable)
+    const maxByRatio = Math.floor(payLinkBalance * 0.90);
+    const maxByReserve = payLinkBalance - totalReserve;
+    const maxDepositAmount = Math.min(maxByRatio, maxByReserve);
     
     console.log('[Claim API] Pay Link balance:', payLinkBalance, 'lamports');
     console.log('[Claim API] Rent-exempt minimum:', rentExemptMin, 'lamports');
-    console.log('[Claim API] Percent reserve (10%):', percentReserve, 'lamports');
-    console.log('[Claim API] Rent-based reserve (2.5x):', rentBasedReserve, 'lamports');
-    console.log('[Claim API] Fee reserve (max of above):', FEE_RESERVE, 'lamports');
-    console.log('[Claim API] Requested amount:', amountLamports, 'lamports');
+    console.log('[Claim API] Safety margin (5%):', safetyMargin, 'lamports');
+    console.log('[Claim API] Total reserve:', totalReserve, 'lamports');
+    console.log('[Claim API] Max by reserve:', maxByReserve, 'lamports');
+    console.log('[Claim API] Max by ratio (90%):', maxByRatio, 'lamports');
     console.log('[Claim API] Max deposit amount:', maxDepositAmount, 'lamports');
+    console.log('[Claim API] Requested amount:', amountLamports, 'lamports');
     
     // Use the smaller of requested amount or available balance
     const actualDepositAmount = Math.min(amountLamports!, maxDepositAmount);
     
     if (actualDepositAmount <= 0) {
       return NextResponse.json({ 
-        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports. Need to keep ${FEE_RESERVE} for rent + fees.` 
+        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports. Need to keep ${totalReserve} for rent + fees.` 
       }, { status: 400 });
     }
     
