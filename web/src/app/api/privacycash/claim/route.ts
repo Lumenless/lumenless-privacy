@@ -61,6 +61,7 @@ async function loadWasmFromFs(): Promise<{ simd: ArrayBuffer; sisd: ArrayBuffer 
  * On Vercel, we download them to /tmp if not already there.
  */
 async function ensureCircuitFiles(baseUrl: string): Promise<string> {
+  const startTime = Date.now();
   const tmpDir = '/tmp/circuits';
   const wasmPath = path.join(tmpDir, 'transaction2.wasm');
   const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
@@ -69,13 +70,12 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
   try {
     await access(wasmPath);
     await access(zkeyPath);
-    console.log('[Claim API] Circuit files found in /tmp');
+    console.log('[Claim API] Circuit files found in /tmp (cached)');
     return path.join(tmpDir, 'transaction2');
   } catch {
     // Files don't exist, need to download
+    console.log('[Claim API] Circuit files not in cache, will download...');
   }
-  
-  console.log('[Claim API] Downloading circuit files...');
   
   // Create tmp directory
   await mkdir(tmpDir, { recursive: true });
@@ -85,48 +85,60 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
   const publicCircuitsDir = path.join(cwd, 'public', 'circuits');
   
   try {
+    console.log('[Claim API] Trying to read from public folder:', publicCircuitsDir);
     const [wasmData, zkeyData] = await Promise.all([
       readFile(path.join(publicCircuitsDir, 'transaction2.wasm')),
       readFile(path.join(publicCircuitsDir, 'transaction2.zkey')),
     ]);
     
+    console.log('[Claim API] Read from public folder, writing to /tmp...');
     await Promise.all([
       writeFile(wasmPath, wasmData),
       writeFile(zkeyPath, zkeyData),
     ]);
     
-    console.log('[Claim API] Circuit files copied from public folder');
+    console.log(`[Claim API] Circuit files copied from public folder (${Date.now() - startTime}ms)`);
     return path.join(tmpDir, 'transaction2');
-  } catch {
-    // Public folder not accessible, download via HTTP
+  } catch (fsErr) {
+    console.log('[Claim API] Public folder not accessible:', fsErr instanceof Error ? fsErr.message : fsErr);
   }
   
   // Download from URL
   const wasmUrl = `${baseUrl}/circuits/transaction2.wasm`;
   const zkeyUrl = `${baseUrl}/circuits/transaction2.zkey`;
   
-  console.log('[Claim API] Fetching circuits from:', wasmUrl);
+  console.log('[Claim API] Fetching circuits from URL...');
+  console.log('[Claim API] WASM URL:', wasmUrl);
+  console.log('[Claim API] ZKEY URL:', zkeyUrl);
   
+  const fetchStart = Date.now();
   const [wasmRes, zkeyRes] = await Promise.all([
     fetch(wasmUrl),
     fetch(zkeyUrl),
   ]);
+  console.log(`[Claim API] Fetch response received (${Date.now() - fetchStart}ms)`);
   
   if (!wasmRes.ok || !zkeyRes.ok) {
     throw new Error(`Failed to download circuit files: wasm=${wasmRes.status}, zkey=${zkeyRes.status}`);
   }
   
+  console.log('[Claim API] Reading response buffers...');
+  const bufferStart = Date.now();
   const [wasmBuffer, zkeyBuffer] = await Promise.all([
     wasmRes.arrayBuffer(),
     zkeyRes.arrayBuffer(),
   ]);
+  console.log(`[Claim API] Buffers read (${Date.now() - bufferStart}ms) - wasm: ${wasmBuffer.byteLength}, zkey: ${zkeyBuffer.byteLength}`);
   
+  console.log('[Claim API] Writing to /tmp...');
+  const writeStart = Date.now();
   await Promise.all([
     writeFile(wasmPath, Buffer.from(wasmBuffer)),
     writeFile(zkeyPath, Buffer.from(zkeyBuffer)),
   ]);
+  console.log(`[Claim API] Files written to /tmp (${Date.now() - writeStart}ms)`);
   
-  console.log('[Claim API] Circuit files downloaded to /tmp');
+  console.log(`[Claim API] Circuit files ready (total: ${Date.now() - startTime}ms)`);
   return path.join(tmpDir, 'transaction2');
 }
 
@@ -282,10 +294,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Ensure circuit files are available on filesystem (snarkjs needs file paths, not URLs)
+    console.log('[Claim API] Step 7: Ensuring circuit files...');
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
-    console.log('[Claim API] Using circuit base path:', circuitBasePath);
+    console.log('[Claim API] Step 7: Circuit base path:', circuitBasePath);
     
     // SOL deposit to recipient
+    console.log('[Claim API] Step 8: Starting deposit (this includes ZK proof generation, may take 30-60s)...');
+    const depositStart = Date.now();
     const result = await deposit({
       lightWasm,
       storage,
@@ -300,7 +315,7 @@ export async function POST(request: NextRequest) {
       recipientEncryptionKey,
     });
 
-    console.log('[Claim API] Direct deposit successful:', result.tx);
+    console.log(`[Claim API] Direct deposit successful (${Date.now() - depositStart}ms):`, result.tx);
 
     return NextResponse.json({
       tx: result.tx,
