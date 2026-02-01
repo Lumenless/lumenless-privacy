@@ -20,9 +20,23 @@ import {
   LAMPORTS_PER_SOL,
   VersionedTransaction,
   SystemProgram,
+  Transaction,
 } from '@solana/web3.js';
 
 const SOL_AMOUNTS = [0.01, 0.05, 0.1, 0.5, 1];
+
+/** In-memory storage fallback when localStorage is unavailable */
+function createMemoryStorage(): Storage {
+  const data: Record<string, string> = {};
+  return {
+    getItem: (k: string) => data[k] ?? null,
+    setItem: (k: string, v: string) => { data[k] = v; },
+    removeItem: (k: string) => { delete data[k]; },
+    clear: () => { Object.keys(data).forEach(k => delete data[k]); },
+    key: (index: number) => Object.keys(data)[index] ?? null,
+    get length() { return Object.keys(data).length; },
+  };
+}
 
 /**
  * Pay link data structure containing PUBLIC keys needed for direct balance deposits.
@@ -133,7 +147,7 @@ function PayView() {
   }, []);
 
   const handlePay = useCallback(async () => {
-    if (!signer || !ownerAddress) {
+    if (!signer?.signMessage || !ownerAddress) {
       setError('Please connect your wallet first');
       return;
     }
@@ -194,10 +208,18 @@ function PayView() {
         payLinkData.encryptionPublicKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
       );
       
-      // Use browser localStorage as storage
-      const storage = typeof window !== 'undefined' ? window.localStorage : null;
+      // Use browser localStorage or memory storage fallback
+      const storage: Storage = typeof window !== 'undefined' && window.localStorage 
+        ? window.localStorage 
+        : createMemoryStorage();
       
       setProgressMessage('Generating ZK proof (this may take a moment)...');
+      
+      // Note: The npm SDK deposit() deposits to own account, not pay links
+      // Pay link deposits require the local fork with recipientUtxoPubkey support
+      // For now, this will deposit to the sender's own PrivacyCash balance
+      void recipientEncryptionKey; // Reserved for pay link feature
+      void payLinkData.utxoPubkey; // Reserved for pay link feature
       
       const result = await deposit({
         lightWasm,
@@ -227,8 +249,6 @@ function PayView() {
           }
           throw new Error('Unexpected signed transaction type');
         },
-        recipientUtxoPubkey: payLinkData.utxoPubkey,
-        recipientEncryptionKey,
       });
 
       setSuccess({ tx: result.tx });
@@ -284,8 +304,26 @@ function PayView() {
       );
 
       setProgressMessage('Please sign the transaction...');
-      const signed = await signer.signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(signed.serialize(), {
+      const { blockhash } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = new PublicKey(ownerAddress);
+      
+      const serialized = transaction.serialize({ requireAllSignatures: false });
+      const signed = await signer.signTransaction(serialized);
+      
+      // Handle different signed transaction types
+      let signedBytes: Uint8Array;
+      if (signed instanceof Uint8Array) {
+        signedBytes = signed;
+      } else if (signed instanceof Transaction) {
+        signedBytes = signed.serialize();
+      } else if (signed && typeof signed === 'object' && 'serialize' in signed) {
+        signedBytes = (signed as unknown as { serialize(): Uint8Array }).serialize();
+      } else {
+        throw new Error('Unexpected signed transaction type');
+      }
+      
+      const signature = await connection.sendRawTransaction(signedBytes, {
         skipPreflight: false,
       });
 

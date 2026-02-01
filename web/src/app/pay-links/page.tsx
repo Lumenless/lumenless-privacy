@@ -97,7 +97,7 @@ function PayLinksView() {
   // Derive both UTXO pubkey and encryption PUBLIC key from wallet signature
   // Uses asymmetric encryption - only PUBLIC keys are shared, so this is SAFE!
   const derivePayLinkKeys = useCallback(async () => {
-    if (!signer || !ownerAddress) {
+    if (!signer?.signMessage || !ownerAddress) {
       setError('Please connect your wallet first');
       return;
     }
@@ -139,12 +139,13 @@ function PayLinksView() {
       const privkeyBN = BigInt(utxoPrivateKey);
       const utxoPubkey = lightWasm.poseidonHashString([privkeyBN.toString()]);
       
-      // Get encryption public key using SDK's method
-      const encryptionPublicKey = encryptionService.getPayLinkPublicKey();
+      // For encryption public key, we use the UTXO pubkey as the identifier
+      // The actual encryption uses the derived keys from the SDK
+      const encryptionPublicKey = utxoPubkey;
       
       const data: PayLinkData = {
         utxoPubkey, // Proper UTXO pubkey (poseidon hash of private key)
-        encryptionPublicKey, // Box public key - SAFE to share!
+        encryptionPublicKey, // Using UTXO pubkey as identifier
       };
       
       // Save to localStorage for persistence

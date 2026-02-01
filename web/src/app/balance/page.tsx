@@ -12,10 +12,23 @@ import { useConnector, useAccount, useTransactionSigner } from '@solana/connecto
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WalletButton } from '@/components/WalletButton';
 import { motion } from 'framer-motion';
-import { Connection, PublicKey, LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 // Message used to derive the encryption key deterministically (matches SDK)
 const DERIVATION_MESSAGE = 'Privacy Money account sign in';
+
+/** In-memory storage fallback when localStorage is unavailable */
+function createMemoryStorage(): Storage {
+  const data: Record<string, string> = {};
+  return {
+    getItem: (k: string) => data[k] ?? null,
+    setItem: (k: string, v: string) => { data[k] = v; },
+    removeItem: (k: string) => { delete data[k]; },
+    clear: () => { Object.keys(data).forEach(k => delete data[k]); },
+    key: (index: number) => Object.keys(data)[index] ?? null,
+    get length() { return Object.keys(data).length; },
+  };
+}
 
 interface UtxoDisplay {
   amount: number;
@@ -69,7 +82,7 @@ function BalanceView() {
 
   // Fetch balance when keys are derived
   const fetchBalance = useCallback(async () => {
-    if (!signer || !ownerAddress) return;
+    if (!signer?.signMessage || !ownerAddress) return;
     
     try {
       setIsLoading(true);
@@ -106,8 +119,10 @@ function BalanceView() {
       // Create connection
       const connection = new Connection(endpoint, 'confirmed');
       
-      // Fetch UTXOs
-      const storage = typeof window !== 'undefined' ? window.localStorage : null;
+      // Fetch UTXOs - use localStorage or in-memory fallback
+      const storage: Storage = typeof window !== 'undefined' && window.localStorage 
+        ? window.localStorage 
+        : createMemoryStorage();
       const fetchedUtxos = await getUtxos({
         publicKey: new PublicKey(ownerAddress),
         connection,
@@ -141,7 +156,7 @@ function BalanceView() {
 
   // Handle withdraw
   const handleWithdraw = useCallback(async () => {
-    if (!signer || !ownerAddress || !withdrawAddress || !withdrawAmount) {
+    if (!signer?.signMessage || !signer?.signTransaction || !ownerAddress || !withdrawAddress || !withdrawAmount) {
       setWithdrawResult({ success: false, message: 'Please fill in all fields' });
       return;
     }
@@ -190,9 +205,11 @@ function BalanceView() {
       
       // Create connection
       const connection = new Connection(endpoint, 'confirmed');
-      const storage = typeof window !== 'undefined' ? window.localStorage : null;
+      const storage: Storage = typeof window !== 'undefined' && window.localStorage 
+        ? window.localStorage 
+        : createMemoryStorage();
       
-      // Perform withdraw
+      // Perform withdraw via relayer
       const result = await withdraw({
         lightWasm,
         storage,
@@ -202,21 +219,6 @@ function BalanceView() {
         recipient: new PublicKey(withdrawAddress),
         amount_in_lamports: lamports,
         encryptionService,
-        transactionSigner: async (tx: VersionedTransaction) => {
-          const serialized = tx.serialize();
-          const signed = await signer.signTransaction(serialized);
-          if (signed instanceof VersionedTransaction) {
-            return signed;
-          }
-          if (signed instanceof Uint8Array) {
-            return VersionedTransaction.deserialize(signed);
-          }
-          if (signed && typeof signed === 'object' && 'serialize' in signed) {
-            const serializedSigned = (signed as { serialize(): Uint8Array }).serialize();
-            return VersionedTransaction.deserialize(serializedSigned);
-          }
-          throw new Error('Unexpected signed transaction type');
-        },
       });
       
       setWithdrawResult({ 

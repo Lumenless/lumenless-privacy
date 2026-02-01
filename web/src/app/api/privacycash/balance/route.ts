@@ -18,8 +18,8 @@ function getBaseUrl(request: NextRequest): string {
   return process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
 }
 
-/** In-memory storage for getUtxos (SDK requires getItem/setItem; we don't persist across requests). */
-function makeMemoryStorage(): { getItem: (k: string) => string | null; setItem: (k: string, v: string) => void } {
+/** In-memory storage for getUtxos (SDK requires full Storage interface). */
+function makeMemoryStorage(): Storage {
   const data: Record<string, string> = {};
   return {
     getItem(k: string) {
@@ -27,6 +27,18 @@ function makeMemoryStorage(): { getItem: (k: string) => string | null; setItem: 
     },
     setItem(k: string, v: string) {
       data[k] = v;
+    },
+    removeItem(k: string) {
+      delete data[k];
+    },
+    clear() {
+      Object.keys(data).forEach(k => delete data[k]);
+    },
+    key(index: number) {
+      return Object.keys(data)[index] ?? null;
+    },
+    get length() {
+      return Object.keys(data).length;
     },
   };
 }
@@ -39,7 +51,8 @@ async function loadWasmFromFs(): Promise<{ simd: ArrayBuffer; sisd: ArrayBuffer 
     readFile(path.join(publicDir, 'hasher_wasm_simd_bg.wasm')),
     readFile(path.join(publicDir, 'light_wasm_hasher_bg.wasm')),
   ]);
-  return { simd: simd.buffer, sisd: sisd.buffer };
+  // Node Buffer.buffer is ArrayBuffer; typings use ArrayBufferLike
+  return { simd: simd.buffer as ArrayBuffer, sisd: sisd.buffer as ArrayBuffer };
 }
 
 export async function POST(request: NextRequest) {
