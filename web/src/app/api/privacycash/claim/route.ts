@@ -207,10 +207,14 @@ export async function POST(request: NextRequest) {
     }
 
     // SOL deposit to recipient
+    // Use full URL for circuit files (keyBasePath is used to fetch .wasm and .zkey)
+    const circuitBasePath = `${baseUrl}/circuits/transaction2`;
+    console.log('[Claim API] Using circuit base path:', circuitBasePath);
+    
     const result = await deposit({
       lightWasm,
       storage,
-      keyBasePath: '/circuits/transaction2',
+      keyBasePath: circuitBasePath,
       publicKey: new PublicKey(userAddress),
       connection,
       amount_in_lamports: amountLamports!,

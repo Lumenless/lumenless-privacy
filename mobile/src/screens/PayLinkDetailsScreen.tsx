@@ -284,12 +284,14 @@ export default function PayLinkDetailsScreen() {
   };
 
   const formatBalance = (amount: number, decimals: number): string => {
-    if (amount === 0) return '0';
-    if (amount < 0.0001) return amount.toExponential(2);
-    if (amount < 0.01) return amount.toFixed(decimals);
-    if (amount < 1) return amount.toFixed(2);
-    if (amount < 1000) return amount.toFixed(2);
-    return amount.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    // Convert from raw units (lamports/base units) to human-readable
+    const humanAmount = amount / Math.pow(10, decimals);
+    if (humanAmount === 0) return '0';
+    if (humanAmount < 0.0001) return humanAmount.toExponential(2);
+    if (humanAmount < 0.01) return humanAmount.toFixed(decimals);
+    if (humanAmount < 1) return humanAmount.toFixed(4);
+    if (humanAmount < 1000) return humanAmount.toFixed(2);
+    return humanAmount.toLocaleString('en-US', { maximumFractionDigits: 2 });
   };
 
   const getTokenDisplayName = (token: TokenAccount): string => {
@@ -553,7 +555,7 @@ export default function PayLinkDetailsScreen() {
                       <View key={item.mint} style={styles.claimableRow}>
                         <Text style={styles.claimableSymbol}>{item.symbol ?? item.mint.slice(0, 8)}</Text>
                         <Text style={styles.claimableAmount}>
-                          {item.amount.toLocaleString(undefined, { maximumFractionDigits: 9 })} {item.symbol ?? ''}
+                          {formatBalance(item.amount, item.decimals)} {item.symbol ?? ''}
                         </Text>
                       </View>
                     ))}

@@ -105,9 +105,10 @@ export async function getTokenAccounts(addressStr: string): Promise<TokenAccount
 
       const mint = parsed.mint;
       mints.push(mint);
+      // Use raw amount (in smallest units) not uiAmount (human-readable)
       tokens.push({
         mint,
-        amount: tokenAmount.uiAmount || 0,
+        amount: Number(tokenAmount.amount) || 0,
         decimals: tokenAmount.decimals || 0,
       });
     }
@@ -144,9 +145,10 @@ export async function getTokenAccounts(addressStr: string): Promise<TokenAccount
         const solMetadata = await getTokenMetadataBatch([solMint]);
         const solMeta = solMetadata.get(solMint);
         
+        // Use raw lamports, not converted to SOL
         tokens.unshift({
           mint: solMint,
-          amount: solData.result.value / 1e9,
+          amount: solData.result.value, // lamports (raw units)
           decimals: 9,
           symbol: 'SOL',
           name: 'Solana',

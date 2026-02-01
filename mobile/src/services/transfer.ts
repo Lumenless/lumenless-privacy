@@ -121,7 +121,8 @@ export async function claimAllTokens(
         console.log(`[Transfer] Building instructions for ${token.symbol || token.mint}`);
         
         const mintPubkey = new PublicKey(token.mint);
-        const rawAmount = BigInt(Math.floor(token.amount * Math.pow(10, token.decimals)));
+        // token.amount is already in raw units (lamports/base units)
+        const rawAmount = BigInt(Math.floor(token.amount));
         
         // Get source token account
         const sourceAta = await getAssociatedTokenAddress(
