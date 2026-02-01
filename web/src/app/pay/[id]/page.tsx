@@ -440,14 +440,14 @@ function PayView() {
               {/* Secondary link - like "Enter card details" */}
               <div className="flex items-center justify-center gap-2 pt-2">
                 <span className="text-2xl">🔐</span>
-                <span className="text-sm text-gray-500">PrivacyCash — coming soon</span>
+                <span className="text-sm text-gray-500">PrivacyCash deposits - coming soon</span>
               </div>
             </div>
           </div>
         </motion.div>
 
         <footer className="mt-8 text-center text-xs text-white/70">
-          © 2025 Lumenless
+          © 2026 Lumenless
         </footer>
       </div>
     );
