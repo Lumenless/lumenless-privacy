@@ -293,30 +293,37 @@ export interface ClaimToPrivacyCashResult {
   error?: string;
 }
 
+const DERIVATION_MESSAGE = 'Privacy Money account sign in';
+
+// Backend API URL for claim (direct deposit from Pay Link to User's PrivacyCash)
+const PRIVACYCASH_API_BASE_URL = 
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_LUMENLESS_WEB_URL) || 
+  'https://lumenless.com';
+
 /**
- * Claim SOL, USDC, USDT from Pay Link wallet into user's PrivacyCash balance.
+ * Claim SOL, USDC, USDT from Pay Link wallet DIRECTLY into user's PrivacyCash balance.
  * 
- * IMPORTANT: PrivacyCash deposits go into the USER's PrivacyCash balance, not the pay link's.
- * This is because PrivacyCash uses the user's wallet signature to derive encryption keys.
+ * This is a SINGLE transaction - no intermediate transfer to user's wallet!
  * 
  * Flow:
- * 1. First, transfer tokens from Pay Link to User's regular wallet
- * 2. Then, user deposits from their wallet into their PrivacyCash balance
+ * 1. User signs derivation message → backend derives their UTXO pubkey + encryption key
+ * 2. Pay Link keypair signs the deposit transaction
+ * 3. Backend submits to PrivacyCash relayer
  * 
- * The actual deposit is done via the backend API which handles ZK proof generation.
+ * The funds go directly from Pay Link → User's PrivacyCash (not Pay Link → User wallet → PrivacyCash)
  * 
- * @param payLinkSecretKeyBase58 - Pay Link's secret key for signing transfers
- * @param userPublicKey - User's wallet public key (destination for transfer, source for deposit)
- * @param userSignMessage - Function to sign derivation message
- * @param userSignTransaction - Function to sign deposit transaction
+ * @param payLinkSecretKeyBase58 - Pay Link's secret key (used to sign the deposit tx)
+ * @param userPublicKey - User's wallet public key (identifies their PrivacyCash account)
+ * @param userSignMessage - Function to sign the derivation message (derives user's keys)
+ * @param _userSignTransaction - Not used in direct deposit (Pay Link signs)
  * @param claimableTokens - Tokens to claim (only SOL, USDC, USDT supported)
- * @param _payLinkHasSol - Whether pay link has SOL for gas (transfer fees)
+ * @param _payLinkHasSol - Not used (Pay Link always pays fees in direct deposit)
  */
 export async function claimToPrivacyCash(
   payLinkSecretKeyBase58: string,
   userPublicKey: string,
   userSignMessage: (message: Uint8Array) => Promise<Uint8Array>,
-  userSignTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
+  _userSignTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
   claimableTokens: TokenAccount[],
   _payLinkHasSol: boolean
 ): Promise<ClaimToPrivacyCashResult> {
@@ -324,102 +331,140 @@ export async function claimToPrivacyCash(
     return { success: false, signatures: [], error: 'No SOL, USDC, or USDT to claim' };
   }
 
-  console.log(`[ClaimToPrivacyCash] Starting claim for ${claimableTokens.length} token(s) to ${userPublicKey.slice(0, 8)}...`);
+  console.log(`[ClaimToPrivacyCash] Starting DIRECT claim for ${claimableTokens.length} token(s) to ${userPublicKey.slice(0, 8)}...`);
 
-  // Import the deposit function from privacycash service
-  const { depositToPrivacyCash } = await import('./privacycash');
-  type TokenKind = 'SOL' | 'USDC' | 'USDT';
+  // Step 1: Get user's signature for deriving their PrivacyCash keys
+  console.log('[ClaimToPrivacyCash] Requesting user signature for key derivation...');
+  const messageBytes = new TextEncoder().encode(DERIVATION_MESSAGE);
+  let signedMessageBase64: string;
+  
+  try {
+    const signature = await userSignMessage(messageBytes);
+    const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+    signedMessageBase64 = Buffer.from(sigBytes).toString('base64');
+    console.log('[ClaimToPrivacyCash] User signature received');
+  } catch (err) {
+    console.error('[ClaimToPrivacyCash] Failed to get user signature:', err);
+    return { 
+      success: false, 
+      signatures: [], 
+      error: `Failed to sign: ${err instanceof Error ? err.message : 'Unknown error'}` 
+    };
+  }
 
   const signatures: string[] = [];
   const errors: string[] = [];
 
-  // Step 1: Transfer tokens from Pay Link to User's wallet
-  console.log('[ClaimToPrivacyCash] Step 1: Transferring tokens from Pay Link to user wallet...');
-  
-  try {
-    const claimResult = await claimAllTokens(payLinkSecretKeyBase58, userPublicKey, claimableTokens);
-    
-    // Check if transfer had failures
-    if (claimResult.failedTransfers > 0 && claimResult.successfulTransfers === 0) {
-      return { 
-        success: false, 
-        signatures: claimResult.signatures, 
-        error: `Transfer failed: ${claimResult.errors.join('; ') || 'Unknown error'}` 
-      };
-    }
-    
-    signatures.push(...claimResult.signatures);
-    console.log('[ClaimToPrivacyCash] Transfer complete, signatures:', claimResult.signatures);
-    
-    // Small delay to let the transfer confirm
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  } catch (err) {
-    console.error('[ClaimToPrivacyCash] Transfer error:', err);
-    return { 
-      success: false, 
-      signatures, 
-      error: `Transfer failed: ${err instanceof Error ? err.message : 'Unknown error'}` 
-    };
-  }
-
-  // Step 2: Deposit each token into PrivacyCash
-  console.log('[ClaimToPrivacyCash] Step 2: Depositing tokens into PrivacyCash...');
-  
+  // Step 2: Deposit each token directly from Pay Link to User's PrivacyCash
   for (const token of claimableTokens) {
     // Determine token kind
+    type TokenKind = 'SOL' | 'USDC' | 'USDT';
     let tokenKind: TokenKind;
+    let mint: string | undefined;
+    
     if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL) {
       tokenKind = 'SOL';
     } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDC) {
       tokenKind = 'USDC';
+      mint = PRIVACYCASH_CLAIMABLE_MINTS.USDC;
     } else if (token.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDT) {
       tokenKind = 'USDT';
+      mint = PRIVACYCASH_CLAIMABLE_MINTS.USDT;
     } else {
       console.log(`[ClaimToPrivacyCash] Skipping unsupported token: ${token.symbol || token.mint}`);
       continue;
     }
 
-    // Convert amount from raw units to human-readable units
-    const humanAmount = token.amount / Math.pow(10, token.decimals);
-    console.log(`[ClaimToPrivacyCash] Depositing ${humanAmount} ${tokenKind} into PrivacyCash...`);
+    // Amount in base units (lamports for SOL, smallest unit for SPL)
+    const amountBaseUnits = token.amount;
+    const humanAmount = amountBaseUnits / Math.pow(10, token.decimals);
+    
+    console.log(`[ClaimToPrivacyCash] Direct deposit ${humanAmount} ${tokenKind} (${amountBaseUnits} base units)...`);
 
     try {
-      const depositResult = await depositToPrivacyCash(
-        tokenKind,
-        humanAmount,
-        userPublicKey,
-        userSignMessage,
-        userSignTransaction
-      );
+      const claimUrl = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/claim`;
+      
+      const requestBody: Record<string, unknown> = {
+        userAddress: userPublicKey,
+        signedMessageBase64,
+        payLinkSecretKey: payLinkSecretKeyBase58,
+      };
 
-      if (depositResult.success && depositResult.tx) {
-        signatures.push(depositResult.tx);
-        console.log(`[ClaimToPrivacyCash] ${tokenKind} deposit successful:`, depositResult.tx);
+      if (tokenKind === 'SOL') {
+        requestBody.amountLamports = amountBaseUnits;
       } else {
-        errors.push(`${tokenKind}: ${depositResult.error || 'Unknown error'}`);
-        console.error(`[ClaimToPrivacyCash] ${tokenKind} deposit failed:`, depositResult.error);
+        requestBody.mint = mint;
+        requestBody.amountBaseUnits = amountBaseUnits;
       }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min for ZK proof
+
+      const res = await fetch(claimUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        let errorMessage = `Claim failed: ${res.status} ${res.statusText}`;
+        try {
+          const text = await res.text();
+          console.log(`[ClaimToPrivacyCash] Error response body: ${text}`);
+          try {
+            const errorData = JSON.parse(text);
+            if (errorData.error) {
+              errorMessage = errorData.error;
+            }
+          } catch {
+            // Response wasn't JSON, use text directly
+            if (text) {
+              errorMessage = text.slice(0, 200);
+            }
+          }
+        } catch {
+          // Couldn't read response body
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await res.json() as { tx?: string; success?: boolean; error?: string };
+
+      if (data.success && data.tx) {
+        signatures.push(data.tx);
+        console.log(`[ClaimToPrivacyCash] ${tokenKind} direct deposit successful:`, data.tx);
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
       errors.push(`${tokenKind}: ${errMsg}`);
-      console.error(`[ClaimToPrivacyCash] ${tokenKind} deposit error:`, err);
+      console.error(`[ClaimToPrivacyCash] ${tokenKind} direct deposit error:`, err);
     }
   }
 
   // Return result
-  if (errors.length > 0 && signatures.length === claimableTokens.length) {
-    // Partial success - transfer worked but some deposits failed
-    return {
-      success: true,
-      signatures,
-      error: `Some deposits failed: ${errors.join('; ')}`,
-    };
-  } else if (errors.length === claimableTokens.length) {
-    // All deposits failed
+  const successCount = signatures.length;
+  const totalCount = claimableTokens.filter(t => 
+    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL ||
+    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDC ||
+    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.USDT
+  ).length;
+
+  if (successCount === 0) {
     return {
       success: false,
       signatures,
       error: errors.join('; '),
+    };
+  } else if (errors.length > 0) {
+    return {
+      success: true,
+      signatures,
+      error: `Partial success (${successCount}/${totalCount}): ${errors.join('; ')}`,
     };
   }
 

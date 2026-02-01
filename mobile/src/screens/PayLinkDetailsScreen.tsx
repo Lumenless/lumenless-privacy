@@ -558,9 +558,6 @@ export default function PayLinkDetailsScreen() {
                       </View>
                     ))}
                   </View>
-                  <Text style={styles.modalDesc}>
-                    {payLinkHasSol ? 'Pay Link wallet will pay gas.' : 'Your wallet will pay gas (Pay Link has no SOL).'}
-                  </Text>
                   <View style={styles.modalButtons}>
                     <Pressable
                       style={({ pressed }) => [
@@ -587,7 +584,7 @@ export default function PayLinkDetailsScreen() {
                       {privacyCashClaiming ? (
                         <ActivityIndicator size="small" color={colors.text} />
                       ) : (
-                        <Text style={styles.modalBtnTextPrimary}>Connect wallet & Claim</Text>
+                        <Text style={styles.modalBtnTextPrimary}>Claim</Text>
                       )}
                     </Pressable>
                   </View>
