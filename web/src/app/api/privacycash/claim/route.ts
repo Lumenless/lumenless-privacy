@@ -125,15 +125,13 @@ export async function POST(request: NextRequest) {
 
     console.log('[Claim API] Step 1: Loading SDK...');
     // Load the forked SDK with recipientUtxoPubkey support
-    // Using @lumenless/privacycash instead of privacycash
     const sdk = await import('@lumenless/privacycash/utils');
-    const { EncryptionService, deposit, depositSPL } = sdk;
+    const { EncryptionService, deposit, depositSPL, UtxoKeypair } = sdk;
     const hasherModule = await import('@lightprotocol/hasher.rs');
     const { WasmFactory } = hasherModule;
     console.log('[Claim API] Step 1: SDK loaded');
 
     console.log('[Claim API] Step 2: Loading WASM...');
-    // Load WASM
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let wasmModule: { create: () => any };
     try {
@@ -164,15 +162,13 @@ export async function POST(request: NextRequest) {
     console.log('[Claim API] Step 2: WASM instance created');
 
     console.log('[Claim API] Step 3: Deriving user encryption keys...');
-    // Step 1: Derive USER's UTXO pubkey and encryption key from their signature
-    // This determines which PrivacyCash account receives the funds
+    // Derive USER's UTXO pubkey and encryption key from their signature
     const userEncryptionService = new EncryptionService();
     userEncryptionService.deriveEncryptionKeyFromSignature(userSigBytes);
     console.log('[Claim API] Step 3: User encryption keys derived');
     
     console.log('[Claim API] Step 4: Creating UTXO keypair for recipient...');
     // Get user's receiving keys
-    const { UtxoKeypair } = await import('@lumenless/privacycash/utils');
     const userUtxoPrivateKey = userEncryptionService.getUtxoPrivateKeyV2();
     const userUtxoKeypair = new UtxoKeypair(userUtxoPrivateKey, lightWasm);
     const recipientUtxoPubkey = userUtxoKeypair.pubkey.toString();
@@ -185,11 +181,8 @@ export async function POST(request: NextRequest) {
     console.log('[Claim API] Step 4: User encryption key:', recipientEncryptionKeyHex.slice(0, 16) + '...');
 
     console.log('[Claim API] Step 5: Creating Pay Link encryption service...');
-    // Step 2: Create encryption service for Pay Link (just for the deposit process)
-    // The Pay Link doesn't need to derive keys from a signature - we just need a dummy service
-    // because the SDK requires one, but we're using recipientUtxoPubkey instead
+    // Create encryption service for Pay Link
     const payLinkEncryptionService = new EncryptionService();
-    // Derive from the pay link's keypair secret
     payLinkEncryptionService.deriveEncryptionKeyFromWallet(payLinkKeypair);
     console.log('[Claim API] Step 5: Pay Link encryption service created');
 
@@ -207,7 +200,6 @@ export async function POST(request: NextRequest) {
 
     // SPL direct deposit not yet supported - need to add recipientUtxoPubkey to depositSPL
     if (isSplDeposit) {
-      // For now, suppress unused variable warning
       void depositSPL;
       return NextResponse.json({ 
         error: 'Direct SPL claim not yet supported. Only SOL is supported for now.' 
@@ -219,14 +211,14 @@ export async function POST(request: NextRequest) {
       lightWasm,
       storage,
       keyBasePath: '/circuits/transaction2',
-      publicKey: new PublicKey(userAddress), // User's public key (for indexing)
+      publicKey: new PublicKey(userAddress),
       connection,
       amount_in_lamports: amountLamports!,
       encryptionService: payLinkEncryptionService,
       transactionSigner,
-      signer: payLinkKeypair.publicKey, // Pay Link pays the fees
-      recipientUtxoPubkey, // Deposit to user's UTXO
-      recipientEncryptionKey, // Encrypt with user's key
+      signer: payLinkKeypair.publicKey,
+      recipientUtxoPubkey,
+      recipientEncryptionKey,
     });
 
     console.log('[Claim API] Direct deposit successful:', result.tx);
@@ -238,14 +230,12 @@ export async function POST(request: NextRequest) {
 
   } catch (err) {
     console.error('[Claim API] Error:', err);
-    // Include full stack trace if available
     if (err instanceof Error && err.stack) {
       console.error('[Claim API] Stack:', err.stack);
     }
     const message = err instanceof Error ? err.message : 'Failed to process claim request';
     return NextResponse.json({ 
       error: message,
-      // Include stack in development for debugging
       ...(process.env.NODE_ENV === 'development' && err instanceof Error && err.stack 
         ? { stack: err.stack } 
         : {})
