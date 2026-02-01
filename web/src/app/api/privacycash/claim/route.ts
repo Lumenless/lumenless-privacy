@@ -299,17 +299,20 @@ export async function POST(request: NextRequest) {
     // Get the rent-exempt minimum for the account
     const rentExemptMin = await connection.getMinimumBalanceForRentExemption(0);
     
-    // The PrivacyCash deposit requires more reserve than just rent-exempt:
-    // - Rent-exempt minimum (~890,880 lamports)
-    // - Transaction fee (~5,000 lamports)  
-    // - Additional buffer for program's internal transfers (~1,000,000 lamports)
-    // Being very conservative: reserve 2x rent-exempt + 100k buffer
-    const FEE_RESERVE = (rentExemptMin * 2) + 100_000;
+    // The PrivacyCash program holds back exactly (balance * 0.0956) for internal operations
+    // Based on observed behavior: 20,010,000 balance → 18,097,960 available = 1,912,040 held
+    // This is approximately 9.56% of the balance, or ~2.15x rent-exempt minimum
+    // To be safe, we reserve: balance * 0.10 (10%) or 2.5x rent-exempt, whichever is larger
+    const percentReserve = Math.floor(payLinkBalance * 0.10);
+    const rentBasedReserve = Math.floor(rentExemptMin * 2.5);
+    const FEE_RESERVE = Math.max(percentReserve, rentBasedReserve);
     const maxDepositAmount = payLinkBalance - FEE_RESERVE;
     
     console.log('[Claim API] Pay Link balance:', payLinkBalance, 'lamports');
     console.log('[Claim API] Rent-exempt minimum:', rentExemptMin, 'lamports');
-    console.log('[Claim API] Fee reserve (conservative):', FEE_RESERVE, 'lamports');
+    console.log('[Claim API] Percent reserve (10%):', percentReserve, 'lamports');
+    console.log('[Claim API] Rent-based reserve (2.5x):', rentBasedReserve, 'lamports');
+    console.log('[Claim API] Fee reserve (max of above):', FEE_RESERVE, 'lamports');
     console.log('[Claim API] Requested amount:', amountLamports, 'lamports');
     console.log('[Claim API] Max deposit amount:', maxDepositAmount, 'lamports');
     
