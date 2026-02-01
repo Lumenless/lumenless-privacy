@@ -20,8 +20,10 @@ const USDT_BASE_UNITS = 1e6;
 
 export const DERIVATION_MESSAGE = 'Privacy Money account sign in';
 
-// Backend API URL - this should point to your deployed web app
-const PRIVACYCASH_API_BASE_URL = 'https://lumenless.com';
+// Backend API URL - configurable via EXPO_PUBLIC_LUMENLESS_WEB_URL env var
+const PRIVACYCASH_API_BASE_URL = 
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_LUMENLESS_WEB_URL) || 
+  'https://lumenless.com';
 
 export type PrivacyCashBalances = {
   sol: number;

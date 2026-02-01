@@ -70,6 +70,7 @@ export function getVaultPDA(owner: PublicKey): [PublicKey, number] {
  * 3. PDA = findProgramAddressSync([hashedName, centralState, domainKey], NAME_PROGRAM_ID)
  */
 export function getSolRecordV2PDA(domainNameAccount: PublicKey): [PublicKey, number] {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const crypto = require('crypto');
   const HASH_PREFIX = 'SPL Name Service';
   
