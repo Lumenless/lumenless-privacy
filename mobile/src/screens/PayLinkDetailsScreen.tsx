@@ -60,6 +60,11 @@ export default function PayLinkDetailsScreen() {
   const [privacyCashModalVisible, setPrivacyCashModalVisible] = useState(false);
   const [privacyCashClaiming, setPrivacyCashClaiming] = useState(false);
 
+  // Backup wallet modal state
+  const [backupModalVisible, setBackupModalVisible] = useState(false);
+  const [privateKey, setPrivateKey] = useState('');
+  const [copiedKey, setCopiedKey] = useState(false);
+
   useEffect(() => {
     loadTokens();
   }, []);
@@ -134,6 +139,33 @@ export default function PayLinkDetailsScreen() {
     if (!privacyCashClaiming) {
       setPrivacyCashModalVisible(false);
     }
+  };
+
+  const handleOpenBackupModal = async () => {
+    try {
+      const secretKey = await getPayLinkSecretKey(payLink.id);
+      if (!secretKey) {
+        Alert.alert('Error', 'Could not retrieve wallet private key');
+        return;
+      }
+      setPrivateKey(secretKey);
+      setBackupModalVisible(true);
+    } catch (error) {
+      console.error('Error getting private key:', error);
+      Alert.alert('Error', 'Could not retrieve wallet private key');
+    }
+  };
+
+  const handleCloseBackupModal = () => {
+    setBackupModalVisible(false);
+    setPrivateKey('');
+    setCopiedKey(false);
+  };
+
+  const handleCopyPrivateKey = async () => {
+    await Clipboard.setStringAsync(privateKey);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
   };
 
   const handleClaimIntoPrivacyCash = async () => {
@@ -442,6 +474,16 @@ export default function PayLinkDetailsScreen() {
                 style={({ pressed }) => [
                   styles.bottomBtn,
                   styles.bottomBtnSecondary,
+                  pressed && styles.bottomBtnPressed,
+                ]}
+                onPress={handleOpenBackupModal}
+              >
+                <Text style={styles.bottomBtnTextSecondary}>Backup</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.bottomBtn,
+                  styles.bottomBtnSecondary,
                   hiding && styles.bottomBtnDisabled,
                   pressed && styles.bottomBtnPressed,
                 ]}
@@ -499,7 +541,7 @@ export default function PayLinkDetailsScreen() {
                 </Pressable>
               </>
             )}
-            {/* Copy link and Hide buttons in same row */}
+            {/* Copy link, Backup, and Hide buttons in same row */}
             <View style={styles.bottomButtonsRow}>
               <Pressable
                 style={({ pressed }) => [
@@ -512,6 +554,16 @@ export default function PayLinkDetailsScreen() {
                 <Text style={styles.bottomBtnTextPrimary}>
                   {copiedLink ? '✓ Copied!' : 'Copy link'}
                 </Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.bottomBtn,
+                  styles.bottomBtnSecondary,
+                  pressed && styles.bottomBtnPressed,
+                ]}
+                onPress={handleOpenBackupModal}
+              >
+                <Text style={styles.bottomBtnTextSecondary}>Backup</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [
@@ -659,6 +711,54 @@ export default function PayLinkDetailsScreen() {
                 ) : (
                   <Text style={styles.modalBtnTextPrimary}>Claim tokens</Text>
                 )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Backup Wallet Modal */}
+      <Modal
+        visible={backupModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCloseBackupModal}
+      >
+        <Pressable style={styles.modalOverlay} onPress={handleCloseBackupModal}>
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Backup wallet</Text>
+            <Text style={styles.modalDesc}>
+              This is the private key for this pay link wallet. Keep it safe and never share it with anyone.
+            </Text>
+            
+            <View style={styles.privateKeyContainer}>
+              <Text style={styles.privateKeyText} selectable>
+                {privateKey}
+              </Text>
+            </View>
+            
+            <View style={styles.modalButtons}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnSecondary,
+                  pressed && styles.modalBtnPressed,
+                ]}
+                onPress={handleCloseBackupModal}
+              >
+                <Text style={styles.modalBtnTextSecondary}>Close</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  pressed && styles.modalBtnPressed,
+                ]}
+                onPress={handleCopyPrivateKey}
+              >
+                <Text style={styles.modalBtnTextPrimary}>
+                  {copiedKey ? '✓ Copied!' : 'Copy key'}
+                </Text>
               </Pressable>
             </View>
           </Pressable>
@@ -967,6 +1067,20 @@ const styles = StyleSheet.create({
     color: colors.error,
     marginTop: spacing.xs,
     marginLeft: spacing.xs,
+  },
+  privateKeyContainer: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  privateKeyText: {
+    ...typography.mono,
+    fontSize: 12,
+    color: colors.text,
+    lineHeight: 18,
   },
   claimableList: {
     marginVertical: spacing.md,

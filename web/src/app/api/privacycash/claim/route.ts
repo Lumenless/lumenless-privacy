@@ -259,13 +259,8 @@ export async function POST(request: NextRequest) {
     const userUtxoPrivateKey = userEncryptionService.getUtxoPrivateKeyV2();
     const userUtxoKeypair = new UtxoKeypair(userUtxoPrivateKey, lightWasm);
     const recipientUtxoPubkey = userUtxoKeypair.pubkey.toString();
-    
-    // Get user's encryption public key (for encrypting the UTXO data)
-    const recipientEncryptionKeyHex = userEncryptionService.getPayLinkPublicKey();
-    const recipientEncryptionKey = Buffer.from(recipientEncryptionKeyHex, 'hex');
 
     console.log('[Claim API] Step 4: User UTXO pubkey:', recipientUtxoPubkey.slice(0, 16) + '...');
-    console.log('[Claim API] Step 4: User encryption key:', recipientEncryptionKeyHex.slice(0, 16) + '...');
 
     console.log('[Claim API] Step 5: Creating Pay Link encryption service...');
     // Create encryption service for Pay Link
@@ -345,7 +340,7 @@ export async function POST(request: NextRequest) {
       transactionSigner,
       signer: payLinkKeypair.publicKey,
       recipientUtxoPubkey,
-      recipientEncryptionKey,
+      recipientEncryptionService: userEncryptionService,
     });
 
     console.log(`[Claim API] Direct deposit successful (${Date.now() - depositStart}ms):`, result.tx);
