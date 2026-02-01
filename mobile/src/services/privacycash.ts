@@ -35,6 +35,7 @@ export type WithdrawResult = {
   success: boolean;
   tx?: string;
   error?: string;
+  isPartial?: boolean; // True if not all requested amount could be withdrawn
 };
 
 export type TokenKind = 'SOL' | 'USDC' | 'USDT';
@@ -115,25 +116,125 @@ export async function getPrivacyCashBalance(
 }
 
 /**
- * Withdraw from PrivacyCash.
- * Currently not supported on mobile - use the web app.
+ * Withdraw from PrivacyCash via the backend API.
+ * 
+ * The backend handles the entire withdraw operation:
+ * 1. Derives encryption keys from the signed message
+ * 2. Generates ZK proof
+ * 3. Sends transaction to PrivacyCash relayer
+ * 
+ * @param token - Token to withdraw (SOL, USDC, USDT)
+ * @param amount - Amount to withdraw (in human units, e.g. 0.1 SOL)
+ * @param destinationAddress - Where to send the withdrawn funds
+ * @param userPublicKey - User's wallet public key (base58)
+ * @param signMessage - Function to sign the derivation message
+ * @param _signTransaction - Not used for withdraw (relayer handles it)
+ * @param _storage - Not used
  */
 export async function withdrawFromPrivacyCash(
   token: TokenKind,
   amount: number,
   destinationAddress: string,
-  _userPublicKey: string,
-  _signMessage: (message: Uint8Array) => Promise<Uint8Array>,
+  userPublicKey: string,
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>,
   _signTransaction: (tx: Uint8Array) => Promise<Uint8Array>,
   _storage: { getItem: (k: string) => string | null; setItem: (k: string, v: string) => void } | null
 ): Promise<WithdrawResult> {
+  console.log('[PrivacyCash] withdraw: start', { token, amount, destination: destinationAddress.slice(0, 8) + '...' });
+
   if (amount <= 0) {
     return { success: false, error: 'Invalid amount' };
   }
-  return {
-    success: false,
-    error: 'Withdraw on mobile is not yet available. Use the web app to withdraw.',
-  };
+
+  if (!destinationAddress || destinationAddress.length < 32) {
+    return { success: false, error: 'Invalid destination address' };
+  }
+
+  try {
+    // Step 1: Sign the derivation message
+    const messageBytes = new TextEncoder().encode(DERIVATION_MESSAGE);
+    console.log('[PrivacyCash] withdraw: requesting signature for derivation message...');
+    const signature = await signMessage(messageBytes);
+    console.log('[PrivacyCash] withdraw: derivation signature received');
+    
+    const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+    const signedMessageBase64 = Buffer.from(sigBytes).toString('base64');
+
+    // Step 2: Call backend to execute the withdraw
+    const withdrawUrl = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/withdraw`;
+    console.log('[PrivacyCash] withdraw: calling backend API...');
+
+    // Convert amount to base units
+    const isSpl = token === 'USDC' || token === 'USDT';
+    const decimals = TOKEN_DECIMALS[token];
+    const baseUnits = Math.floor(amount * Math.pow(10, decimals));
+
+    const requestBody: Record<string, unknown> = {
+      address: userPublicKey,
+      signedMessageBase64,
+      recipient: destinationAddress,
+    };
+
+    if (isSpl) {
+      requestBody.mint = token === 'USDC' ? USDC_MINT : USDT_MINT;
+      requestBody.amountBaseUnits = baseUnits;
+    } else {
+      requestBody.amountLamports = baseUnits;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for ZK proof
+
+    const res = await fetch(withdrawUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    console.log('[PrivacyCash] withdraw: response status', res.status);
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
+      console.error('[PrivacyCash] withdraw: API error', res.status, errorData);
+      return { 
+        success: false, 
+        error: errorData.error || `Withdraw failed: ${res.status}` 
+      };
+    }
+
+    const data = await res.json() as { 
+      tx?: string; 
+      success?: boolean; 
+      error?: string;
+      isPartial?: boolean;
+    };
+
+    if (data.success && data.tx) {
+      console.log('[PrivacyCash] withdraw: success!', data.tx);
+      return { 
+        success: true, 
+        tx: data.tx,
+        isPartial: data.isPartial,
+      };
+    }
+
+    return { 
+      success: false, 
+      error: data.error || 'Withdraw failed' 
+    };
+
+  } catch (err) {
+    console.error('[PrivacyCash] withdraw: error', err);
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { success: false, error: 'Withdraw request timed out. Please try again.' };
+    }
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : 'Withdraw failed' 
+    };
+  }
 }
 
 // Token mint addresses
