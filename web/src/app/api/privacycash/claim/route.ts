@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile, access, mkdir } from 'fs/promises';
 import path from 'path';
 import bs58 from 'bs58';
 
@@ -53,6 +53,81 @@ async function loadWasmFromFs(): Promise<{ simd: ArrayBuffer; sisd: ArrayBuffer 
     readFile(path.join(publicDir, 'light_wasm_hasher_bg.wasm')),
   ]);
   return { simd: simd.buffer as ArrayBuffer, sisd: sisd.buffer as ArrayBuffer };
+}
+
+/** 
+ * Ensure circuit files are available on the filesystem.
+ * snarkjs requires filesystem paths, not URLs.
+ * On Vercel, we download them to /tmp if not already there.
+ */
+async function ensureCircuitFiles(baseUrl: string): Promise<string> {
+  const tmpDir = '/tmp/circuits';
+  const wasmPath = path.join(tmpDir, 'transaction2.wasm');
+  const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
+  
+  // Check if files already exist (cached from previous invocation)
+  try {
+    await access(wasmPath);
+    await access(zkeyPath);
+    console.log('[Claim API] Circuit files found in /tmp');
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    // Files don't exist, need to download
+  }
+  
+  console.log('[Claim API] Downloading circuit files...');
+  
+  // Create tmp directory
+  await mkdir(tmpDir, { recursive: true });
+  
+  // First, try to read from public folder (works in local dev)
+  const cwd = process.cwd();
+  const publicCircuitsDir = path.join(cwd, 'public', 'circuits');
+  
+  try {
+    const [wasmData, zkeyData] = await Promise.all([
+      readFile(path.join(publicCircuitsDir, 'transaction2.wasm')),
+      readFile(path.join(publicCircuitsDir, 'transaction2.zkey')),
+    ]);
+    
+    await Promise.all([
+      writeFile(wasmPath, wasmData),
+      writeFile(zkeyPath, zkeyData),
+    ]);
+    
+    console.log('[Claim API] Circuit files copied from public folder');
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    // Public folder not accessible, download via HTTP
+  }
+  
+  // Download from URL
+  const wasmUrl = `${baseUrl}/circuits/transaction2.wasm`;
+  const zkeyUrl = `${baseUrl}/circuits/transaction2.zkey`;
+  
+  console.log('[Claim API] Fetching circuits from:', wasmUrl);
+  
+  const [wasmRes, zkeyRes] = await Promise.all([
+    fetch(wasmUrl),
+    fetch(zkeyUrl),
+  ]);
+  
+  if (!wasmRes.ok || !zkeyRes.ok) {
+    throw new Error(`Failed to download circuit files: wasm=${wasmRes.status}, zkey=${zkeyRes.status}`);
+  }
+  
+  const [wasmBuffer, zkeyBuffer] = await Promise.all([
+    wasmRes.arrayBuffer(),
+    zkeyRes.arrayBuffer(),
+  ]);
+  
+  await Promise.all([
+    writeFile(wasmPath, Buffer.from(wasmBuffer)),
+    writeFile(zkeyPath, Buffer.from(zkeyBuffer)),
+  ]);
+  
+  console.log('[Claim API] Circuit files downloaded to /tmp');
+  return path.join(tmpDir, 'transaction2');
 }
 
 // Known token mints
@@ -206,11 +281,11 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // SOL deposit to recipient
-    // Use full URL for circuit files (keyBasePath is used to fetch .wasm and .zkey)
-    const circuitBasePath = `${baseUrl}/circuits/transaction2`;
+    // Ensure circuit files are available on filesystem (snarkjs needs file paths, not URLs)
+    const circuitBasePath = await ensureCircuitFiles(baseUrl);
     console.log('[Claim API] Using circuit base path:', circuitBasePath);
     
+    // SOL deposit to recipient
     const result = await deposit({
       lightWasm,
       storage,
