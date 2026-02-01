@@ -293,6 +293,31 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
+    // Check actual Pay Link balance and adjust amount if needed
+    const payLinkBalance = await connection.getBalance(payLinkKeypair.publicKey);
+    // Reserve ~0.002 SOL for transaction fees (rent + compute)
+    const FEE_RESERVE = 2_000_000; // 0.002 SOL
+    const maxDepositAmount = payLinkBalance - FEE_RESERVE;
+    
+    console.log('[Claim API] Pay Link balance:', payLinkBalance, 'lamports');
+    console.log('[Claim API] Requested amount:', amountLamports, 'lamports');
+    console.log('[Claim API] Max deposit amount (after fee reserve):', maxDepositAmount, 'lamports');
+    
+    // Use the smaller of requested amount or available balance
+    const actualDepositAmount = Math.min(amountLamports!, maxDepositAmount);
+    
+    if (actualDepositAmount <= 0) {
+      return NextResponse.json({ 
+        error: `Insufficient balance in Pay Link: ${payLinkBalance} lamports (need at least ${FEE_RESERVE} for fees)` 
+      }, { status: 400 });
+    }
+    
+    // If significantly less than requested, warn in logs
+    if (actualDepositAmount < amountLamports! * 0.95) {
+      console.log('[Claim API] Warning: Depositing less than requested due to balance constraints');
+      console.log('[Claim API] Actual deposit amount:', actualDepositAmount, 'lamports');
+    }
+
     // Ensure circuit files are available on filesystem (snarkjs needs file paths, not URLs)
     console.log('[Claim API] Step 7: Ensuring circuit files...');
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
@@ -300,6 +325,7 @@ export async function POST(request: NextRequest) {
     
     // SOL deposit to recipient
     console.log('[Claim API] Step 8: Starting deposit (this includes ZK proof generation, may take 30-60s)...');
+    console.log('[Claim API] Depositing', actualDepositAmount, 'lamports to user PrivacyCash');
     const depositStart = Date.now();
     const result = await deposit({
       lightWasm,
@@ -307,7 +333,7 @@ export async function POST(request: NextRequest) {
       keyBasePath: circuitBasePath,
       publicKey: new PublicKey(userAddress),
       connection,
-      amount_in_lamports: amountLamports!,
+      amount_in_lamports: actualDepositAmount,
       encryptionService: payLinkEncryptionService,
       transactionSigner,
       signer: payLinkKeypair.publicKey,
