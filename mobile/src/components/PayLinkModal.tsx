@@ -1,23 +1,30 @@
-import { View, Text, StyleSheet, Modal, Pressable, Animated } from 'react-native';
+import { View, Text, StyleSheet, Modal, Pressable, Animated, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRef, useEffect, useState } from 'react';
-import { getPayLinkUrl } from '../services/paylink';
+import { getPayLinkUrl, getPayLinkSecretKey } from '../services/paylink';
 import { colors, spacing, radius, typography } from '../theme';
 
 interface PayLinkModalProps {
   visible: boolean;
   publicKey: string | null;
+  payLinkId: string | null;
   onClose: () => void;
 }
 
-export default function PayLinkModal({ visible, publicKey, onClose }: PayLinkModalProps) {
+export default function PayLinkModal({ visible, publicKey, payLinkId, onClose }: PayLinkModalProps) {
   const [copied, setCopied] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
+  const [privateKey, setPrivateKey] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
   const fade = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.92)).current;
 
   useEffect(() => {
     if (visible) {
       setCopied(false);
+      setShowBackup(false);
+      setPrivateKey(null);
+      setCopiedKey(false);
       Animated.parallel([
         Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
         Animated.spring(scale, { toValue: 1, friction: 10, tension: 90, useNativeDriver: true }),
@@ -33,6 +40,36 @@ export default function PayLinkModal({ visible, publicKey, onClose }: PayLinkMod
     await Clipboard.setStringAsync(getPayLinkUrl(publicKey));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleBackup = async () => {
+    if (!payLinkId || showBackup) return;
+
+    Alert.alert(
+      'Backup Private Key',
+      'This will reveal the private key for this invoice wallet. Anyone with this key can access the funds. Keep it safe and never share it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Show Key',
+          style: 'destructive',
+          onPress: async () => {
+            const key = await getPayLinkSecretKey(payLinkId);
+            if (key) {
+              setPrivateKey(key);
+              setShowBackup(true);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCopyPrivateKey = async () => {
+    if (!privateKey) return;
+    await Clipboard.setStringAsync(privateKey);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
   };
 
   if (!publicKey) return null;
@@ -82,6 +119,41 @@ export default function PayLinkModal({ visible, publicKey, onClose }: PayLinkMod
               {copied ? 'Copied to clipboard' : 'Copy link'}
             </Text>
           </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.backupBtn,
+              showBackup && styles.backupBtnDisabled,
+              pressed && !showBackup && styles.backupBtnPressed,
+            ]}
+            onPress={handleBackup}
+            disabled={showBackup}
+          >
+            <Text style={styles.backupBtnLabel}>Backup</Text>
+          </Pressable>
+
+          {showBackup && privateKey && (
+            <View style={styles.backupSection}>
+              <Text style={styles.backupWarning}>Private Key (keep secret!)</Text>
+              <View style={styles.privateKeyWrap}>
+                <Text style={styles.privateKey} numberOfLines={3} selectable>
+                  {privateKey}
+                </Text>
+              </View>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.copyKeyBtn,
+                  copiedKey && styles.copyKeyBtnDone,
+                  pressed && styles.copyKeyBtnPressed,
+                ]}
+                onPress={handleCopyPrivateKey}
+              >
+                <Text style={styles.copyKeyBtnLabel}>
+                  {copiedKey ? 'Copied!' : 'Copy private key'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
 
           <Pressable
             style={({ pressed }) => [styles.doneBtn, pressed && styles.doneBtnPressed]}
@@ -182,6 +254,79 @@ const styles = StyleSheet.create({
     ...typography.button,
     color: '#fff',
     fontSize: 15,
+  },
+  backupBtn: {
+    width: '100%',
+    backgroundColor: colors.accent,
+    paddingVertical: 16,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+    opacity: 0.75,
+  },
+  backupBtnDisabled: {
+    opacity: 0.5,
+  },
+  backupBtnPressed: {
+    opacity: 0.9,
+  },
+  backupBtnLabel: {
+    ...typography.button,
+    color: '#fff',
+    fontSize: 15,
+  },
+  backupSection: {
+    width: '100%',
+    marginBottom: spacing.md,
+  },
+  backupWarning: {
+    ...typography.caption,
+    fontSize: 12,
+    color: colors.error,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+    fontWeight: '600',
+  },
+  privateKeyWrap: {
+    width: '100%',
+    backgroundColor: colors.errorDim,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+  privateKey: {
+    ...typography.mono,
+    fontSize: 11,
+    color: colors.text,
+    textAlign: 'center',
+  },
+  copyKeyBtn: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignSelf: 'center',
+  },
+  copyKeyBtnDone: {
+    backgroundColor: colors.successDim,
+    borderColor: colors.success,
+  },
+  copyKeyBtnPressed: {
+    opacity: 0.7,
+  },
+  copyKeyBtnLabel: {
+    ...typography.caption,
+    fontSize: 12,
+    color: colors.textSecondary,
   },
   doneBtn: {
     paddingVertical: spacing.md,

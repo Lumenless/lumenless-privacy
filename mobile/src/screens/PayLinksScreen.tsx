@@ -45,6 +45,7 @@ export default function PayLinksScreen() {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [successModalVisible, setSuccessModalVisible] = useState(false);
   const [newLinkPublicKey, setNewLinkPublicKey] = useState<string | null>(null);
+  const [newLinkId, setNewLinkId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
@@ -261,6 +262,7 @@ export default function PayLinksScreen() {
     try {
       const link = await createPayLink(title);
       setNewLinkPublicKey(link.publicKey);
+      setNewLinkId(link.id);
       setCreateModalVisible(false);
       setSuccessModalVisible(true);
       await loadPayLinks();
@@ -523,6 +525,7 @@ export default function PayLinksScreen() {
       <PayLinkModal
         visible={successModalVisible}
         publicKey={newLinkPublicKey}
+        payLinkId={newLinkId}
         onClose={() => setSuccessModalVisible(false)}
       />
 
