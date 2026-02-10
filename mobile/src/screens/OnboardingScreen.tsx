@@ -7,10 +7,14 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useRef } from 'react';
 import { colors, spacing, radius, typography } from '../theme';
+import { mintLumenId } from '../services/lumenid';
+import { base64AddressToBase58 } from '../services/transfer';
+import { getWalletErrorMessage } from '../utils/walletErrors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -24,18 +28,20 @@ const SLIDES = [
     description: 'Each invoice has its own wallet. Backup your keys and withdraw when you want.',
   },
   {
-    title: 'Claim into PrivacyCash',
-    description: 'Your main wallet is not trackable at all, because you can claim funds directly into your PrivacyCash balance.',
+    title: 'Mint your Lumen ID',
+    description: 'It\'s your unique identity. You\'ll need it to use the app.',
   },
 ];
 
 interface OnboardingScreenProps {
-  onComplete: () => void;
+  onSuccess: () => void;
 }
 
-export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
+export default function OnboardingScreen({ onSuccess }: OnboardingScreenProps) {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [minting, setMinting] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -51,8 +57,42 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     });
   };
 
-  const handleStart = () => {
-    onComplete();
+  const handleMintLumenId = async () => {
+    setMinting(true);
+    setMintError(null);
+    try {
+      const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+      const { VersionedTransaction } = await import('@solana/web3.js');
+
+      await mwa.transact(async (wallet) => {
+        const authResult = await wallet.authorize({
+          cluster: 'mainnet-beta',
+          identity: { name: 'Lumenless', uri: 'https://lumenless.com', icon: 'icon.png' },
+        });
+        const base64Address = authResult.accounts[0].address;
+        const userAddressBase58 = base64AddressToBase58(base64Address);
+
+        const signTransaction = async (tx: Uint8Array): Promise<Uint8Array> => {
+          const versionedTx = VersionedTransaction.deserialize(tx);
+          const [signedTx] = await wallet.signTransactions({
+            transactions: [versionedTx],
+          });
+          return new Uint8Array(signedTx.serialize());
+        };
+
+        const result = await mintLumenId(userAddressBase58, signTransaction);
+
+        if (result.success) {
+          onSuccess();
+        } else {
+          setMintError(result.error ?? 'Mint failed');
+        }
+      });
+    } catch (err: unknown) {
+      setMintError(getWalletErrorMessage(err, 'Could not complete mint. Please try again.'));
+    } finally {
+      setMinting(false);
+    }
   };
 
   return (
@@ -92,12 +132,25 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
         </View>
 
         {currentIndex === SLIDES.length - 1 ? (
-          <Pressable
-            style={({ pressed }) => [styles.startBtn, pressed && styles.startBtnPressed]}
-            onPress={handleStart}
-          >
-            <Text style={styles.startBtnLabel}>Start</Text>
-          </Pressable>
+          <>
+            {mintError ? (
+              <Text style={styles.mintError}>{mintError}</Text>
+            ) : null}
+            <Pressable
+              style={({ pressed }) => [
+                styles.startBtn,
+                (minting || pressed) && styles.startBtnPressed,
+              ]}
+              onPress={handleMintLumenId}
+              disabled={minting}
+            >
+              {minting ? (
+                <ActivityIndicator size="small" color="#5b21b6" />
+              ) : (
+                <Text style={styles.startBtnLabel}>MINT LUMEN ID</Text>
+              )}
+            </Pressable>
+          </>
         ) : (
           <Pressable
             style={({ pressed }) => [styles.nextBtn, pressed && styles.nextBtnPressed]}
@@ -220,5 +273,11 @@ const styles = StyleSheet.create({
     ...typography.button,
     fontSize: 17,
     color: '#5b21b6',
+  },
+  mintError: {
+    ...typography.caption,
+    color: colors.error,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
 });

@@ -5,20 +5,21 @@ import { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import { hasCompletedOnboarding, setOnboardingCompleted } from './src/services/onboarding';
+import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted } from './src/services/onboarding';
 
 export default function App() {
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
+  const [hasMinted, setHasMinted] = useState<boolean | null>(null);
 
   useEffect(() => {
-    hasCompletedOnboarding().then(setHasSeenOnboarding);
+    hasMintedLumenId().then(setHasMinted);
   }, []);
 
-  const handleOnboardingComplete = () => {
-    setOnboardingCompleted().then(() => setHasSeenOnboarding(true));
+  const handleMintSuccess = () => {
+    setOnboardingCompleted().then(() => {});
+    setLumenIdMinted().then(() => setHasMinted(true));
   };
 
-  if (hasSeenOnboarding === null) {
+  if (hasMinted === null) {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
@@ -29,11 +30,11 @@ export default function App() {
     );
   }
 
-  if (!hasSeenOnboarding) {
+  if (!hasMinted) {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
-        <OnboardingScreen onComplete={handleOnboardingComplete} />
+        <OnboardingScreen onSuccess={handleMintSuccess} />
       </SafeAreaProvider>
     );
   }

@@ -32,6 +32,7 @@ import {
 import { VersionedTransaction } from '@solana/web3.js';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
+import { getWalletErrorMessage } from '../utils/walletErrors';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import Logo from '../components/Logo';
 
@@ -244,11 +245,11 @@ export default function PayLinkDetailsScreen() {
           Alert.alert('Claim into PrivacyCash', result.error ?? 'Something went wrong.', [{ text: 'OK' }]);
         }
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[ClaimIntoPrivacyCash] Error:', error);
       Alert.alert(
         'Error',
-        error?.message || 'Could not complete claim. Make sure your wallet app is installed and try again.',
+        getWalletErrorMessage(error, 'Could not complete claim. Make sure your wallet app is installed and try again.'),
         [{ text: 'OK' }]
       );
     } finally {
@@ -317,11 +318,11 @@ export default function PayLinkDetailsScreen() {
       
       // Refresh token list
       await loadTokens();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Claim] Error:', error);
       Alert.alert(
         'Error',
-        error?.message || 'An unexpected error occurred while claiming tokens.',
+        getWalletErrorMessage(error, 'An unexpected error occurred while claiming tokens.'),
         [{ text: 'OK' }]
       );
     } finally {

@@ -22,6 +22,7 @@ import {
   PRIVACYCASH_TOKEN_LABELS,
 } from '../services/privacycash';
 import { isValidSolanaAddress, base64AddressToBase58 } from '../services/transfer';
+import { getWalletErrorMessage } from '../utils/walletErrors';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -77,7 +78,7 @@ export default function PrivacyCashScreen() {
       });
     } catch (err: unknown) {
       console.error('[PrivacyCash] connect/balance error:', err);
-      setError(err instanceof Error ? err.message : 'Could not load balance. Connect your wallet and try again.');
+      setError(getWalletErrorMessage(err, 'Could not load balance. Connect your wallet and try again.'));
       if (!isRefresh) {
         setBalance(null);
         setUserAddress(null);
@@ -164,7 +165,7 @@ export default function PrivacyCashScreen() {
         }
       });
     } catch (err: unknown) {
-      setWithdrawError(err instanceof Error ? err.message : 'Withdrawal failed');
+      setWithdrawError(getWalletErrorMessage(err, 'Withdrawal failed. Please try again.'));
     } finally {
       setWithdrawing(false);
     }

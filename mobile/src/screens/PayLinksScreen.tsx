@@ -30,6 +30,7 @@ import {
   PRIVACYCASH_TOKEN_LABELS,
 } from '../services/privacycash';
 import { isValidSolanaAddress, base64AddressToBase58 } from '../services/transfer';
+import { getWalletErrorMessage } from '../utils/walletErrors';
 import { VersionedTransaction } from '@solana/web3.js';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
@@ -153,7 +154,7 @@ export default function PayLinksScreen() {
       console.log('[PayLinksScreen] Connect wallet: transact finished');
     } catch (err: unknown) {
       console.error('[PayLinksScreen] Connect wallet: error', err);
-      setPcError(err instanceof Error ? err.message : 'Could not load balance. Connect your wallet and try again.');
+      setPcError(getWalletErrorMessage(err, 'Could not load balance. Connect your wallet and try again.'));
       setPcBalance(null);
       setPcUserAddress(null);
     } finally {
@@ -242,7 +243,7 @@ export default function PayLinksScreen() {
         }
       });
     } catch (err: unknown) {
-      setWithdrawError(err instanceof Error ? err.message : 'Withdrawal failed');
+      setWithdrawError(getWalletErrorMessage(err, 'Withdrawal failed. Please try again.'));
     } finally {
       setWithdrawing(false);
     }
