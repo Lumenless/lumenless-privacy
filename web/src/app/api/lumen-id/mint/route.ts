@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
 
     const transaction = new Transaction();
     transaction.recentBlockhash = blockhash;
@@ -116,12 +116,12 @@ export async function POST(request: NextRequest) {
 
     transaction.add(
       createMintToInstruction(
-        TOKEN_PROGRAM_ID,
         mint,
         userAta,
         mintAuthorityKeypair.publicKey,
+        1,
         [],
-        1
+        TOKEN_PROGRAM_ID
       )
     );
 
