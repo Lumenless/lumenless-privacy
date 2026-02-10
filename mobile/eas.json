@@ -1,0 +1,16 @@
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+    },
+    "preview": {
+      "distribution": "internal",
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+    },
+    "production": {
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+    }
+  }
+}

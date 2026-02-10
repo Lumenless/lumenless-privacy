@@ -11,6 +11,7 @@ import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
+  getMinimumBalanceForRentExemptAccount,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
@@ -19,6 +20,8 @@ import bs58 from 'bs58';
 const LAMPORTS_PER_SOL = 1e9;
 const MINT_FEE_SOL = 0.05;
 const MINT_FEE_LAMPORTS = BigInt(Math.floor(MINT_FEE_SOL * LAMPORTS_PER_SOL));
+/** Extra lamports for transaction fee (signatures + priority). */
+const TX_FEE_BUFFER_LAMPORTS = 50_000;
 
 /**
  * POST /api/lumen-id/mint
@@ -86,6 +89,28 @@ export async function POST(request: NextRequest) {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
+    const [balance, ataInfo, ataRentLamports] = await Promise.all([
+      connection.getBalance(userPubkey),
+      connection.getAccountInfo(userAta),
+      getMinimumBalanceForRentExemptAccount(connection),
+    ]);
+
+    const needsAta = !ataInfo;
+    const requiredLamports =
+      Number(MINT_FEE_LAMPORTS) +
+      (needsAta ? ataRentLamports : 0) +
+      TX_FEE_BUFFER_LAMPORTS;
+    if (balance < requiredLamports) {
+      const balanceSol = (balance / LAMPORTS_PER_SOL).toFixed(4);
+      const requiredSol = (requiredLamports / LAMPORTS_PER_SOL).toFixed(4);
+      return NextResponse.json(
+        {
+          error: `Insufficient SOL balance. You need at least ${requiredSol} SOL. Your balance: ${balanceSol} SOL.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
 
     const transaction = new Transaction();
@@ -100,7 +125,6 @@ export async function POST(request: NextRequest) {
       })
     );
 
-    const ataInfo = await connection.getAccountInfo(userAta);
     if (!ataInfo) {
       transaction.add(
         createAssociatedTokenAccountInstruction(

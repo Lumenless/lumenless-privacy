@@ -12,7 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useRef } from 'react';
 import { colors, spacing, radius, typography } from '../theme';
-import { mintLumenId } from '../services/lumenid';
+import { mintLumenId, checkLumenIdMintBalance } from '../services/lumenid';
 import { base64AddressToBase58 } from '../services/transfer';
 import { getWalletErrorMessage } from '../utils/walletErrors';
 
@@ -72,6 +72,12 @@ export default function OnboardingScreen({ onSuccess }: OnboardingScreenProps) {
         const base64Address = authResult.accounts[0].address;
         const userAddressBase58 = base64AddressToBase58(base64Address);
 
+        const balanceCheck = await checkLumenIdMintBalance(userAddressBase58);
+        if (!balanceCheck.sufficient && balanceCheck.errorMessage) {
+          setMintError(balanceCheck.errorMessage);
+          return;
+        }
+
         const signTransaction = async (tx: Uint8Array): Promise<Uint8Array> => {
           const versionedTx = VersionedTransaction.deserialize(tx);
           const [signedTx] = await wallet.signTransactions({
@@ -85,7 +91,12 @@ export default function OnboardingScreen({ onSuccess }: OnboardingScreenProps) {
         if (result.success) {
           onSuccess();
         } else {
-          setMintError(result.error ?? 'Mint failed');
+          setMintError(
+            getWalletErrorMessage(
+              result.error != null ? new Error(result.error) : null,
+              result.error ?? 'Mint failed'
+            )
+          );
         }
       });
     } catch (err: unknown) {
