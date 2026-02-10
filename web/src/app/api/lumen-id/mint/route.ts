@@ -35,6 +35,13 @@ const MINT_FEE_LAMPORTS = BigInt(Math.floor(MINT_FEE_SOL * LAMPORTS_PER_SOL));
  * - LUMEN_ID_MINT: Public key of the Lumen ID token mint
  * - LUMEN_ID_MINT_AUTHORITY: Base58 secret key of the mint authority keypair
  */
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Use POST with body { address: string } to build a mint transaction.' },
+    { status: 405, headers: { Allow: 'POST' } }
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

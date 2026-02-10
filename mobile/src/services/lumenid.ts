@@ -42,6 +42,11 @@ export async function mintLumenId(
       } catch {
         if (errText) errMsg = errText.slice(0, 200);
       }
+      if (res.status === 405) {
+        errMsg = 'Mint service is not available. Please update the app or try again later.';
+      } else if (res.status === 503) {
+        errMsg = 'Mint is not set up yet. Please try again later.';
+      }
       return { success: false, error: errMsg };
     }
 
