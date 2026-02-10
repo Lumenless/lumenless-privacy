@@ -1,14 +1,11 @@
 import 'react-native-gesture-handler'; // Must be imported early for React Navigation
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { createContext, useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted, clearLumenIdMinted } from './src/services/onboarding';
-
-/** For test button: clear Lumen ID minted flag and return to onboarding. */
-export const ResetLumenIdContext = createContext<(() => void) | null>(null);
+import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted } from './src/services/onboarding';
 
 export default function App() {
   const [hasMinted, setHasMinted] = useState<boolean | null>(null);
@@ -21,10 +18,6 @@ export default function App() {
     setOnboardingCompleted().then(() => {});
     setLumenIdMinted().then(() => setHasMinted(true));
   };
-
-  const handleResetLumenId = useCallback(() => {
-    clearLumenIdMinted().then(() => setHasMinted(false));
-  }, []);
 
   if (hasMinted === null) {
     return (
@@ -49,9 +42,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <ResetLumenIdContext.Provider value={handleResetLumenId}>
-        <AppNavigator />
-      </ResetLumenIdContext.Provider>
+      <AppNavigator />
     </SafeAreaProvider>
   );
 }
