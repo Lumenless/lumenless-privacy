@@ -10,9 +10,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { colors, spacing, radius, typography } from '../theme';
 import { mintLumenId, checkLumenIdMintBalance } from '../services/lumenid';
+import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
 import { base64AddressToBase58 } from '../services/transfer';
 import { getWalletErrorMessage } from '../utils/walletErrors';
 
@@ -43,6 +44,10 @@ export default function OnboardingScreen({ onSuccess }: OnboardingScreenProps) {
   const [minting, setMinting] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    logScreenView('Onboarding', 'OnboardingScreen');
+  }, []);
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
@@ -89,6 +94,8 @@ export default function OnboardingScreen({ onSuccess }: OnboardingScreenProps) {
         const result = await mintLumenId(userAddressBase58, signTransaction);
 
         if (result.success) {
+          logEvent(analyticsEvents.onboardingComplete, {});
+          logEvent(analyticsEvents.walletConnect, { source: 'onboarding_mint' });
           onSuccess();
         } else {
           setMintError(

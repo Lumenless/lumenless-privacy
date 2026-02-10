@@ -20,6 +20,7 @@ import { usePayLinkBalances } from '../hooks/usePayLinkBalances';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
 import { testNetworkConnectivity } from '../services/balances';
 import {
   getPrivacyCashBalance,
@@ -79,8 +80,9 @@ export default function PayLinksScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      logScreenView('PayLinks', 'PayLinksScreen');
       loadPayLinks();
-      
+
       // Test network connectivity on mount (for debugging)
       if (__DEV__) {
         testNetworkConnectivity().then((ok) => {
@@ -150,6 +152,7 @@ export default function PayLinksScreen() {
         const balances = await getPrivacyCashBalance(userPublicKey, signMessage, null);
         console.log('[PayLinksScreen] Connect wallet: balance received', { sol: balances.sol, usdc: balances.usdc, usdt: balances.usdt });
         setPcBalance(balances);
+        logEvent(analyticsEvents.walletConnect, { source: 'pay_links_private_wallet' });
       });
       console.log('[PayLinksScreen] Connect wallet: transact finished');
     } catch (err: unknown) {
@@ -225,6 +228,7 @@ export default function PayLinksScreen() {
           null
         );
         if (result.success) {
+          logEvent(analyticsEvents.withdraw, { token: withdrawToken, amount });
           setWithdrawModalVisible(false);
           Alert.alert('Withdrawal successful', result.tx ? `Tx: ${result.tx}` : 'Done.', [{ text: 'OK' }]);
           setPcBalance((prev) =>
@@ -262,6 +266,7 @@ export default function PayLinksScreen() {
     setCreating(true);
     try {
       const link = await createPayLink(title);
+      logEvent(analyticsEvents.createInvoice, { pay_link_id: link.id });
       setNewLinkPublicKey(link.publicKey);
       setNewLinkId(link.id);
       setCreateModalVisible(false);

@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { getTokenAccounts, TokenAccount } from '../services/tokens';
 import { deletePayLink, PayLink, getPayLinkUrl, getPayLinkSecretKey } from '../services/paylink';
@@ -35,6 +35,7 @@ import { colors, spacing, radius, typography } from '../theme';
 import { getWalletErrorMessage } from '../utils/walletErrors';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import Logo from '../components/Logo';
+import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 type PayLinkDetailsRouteProp = RouteProp<RootStackParamList, 'PayLinkDetails'>;
@@ -65,6 +66,12 @@ export default function PayLinkDetailsScreen() {
   const [backupModalVisible, setBackupModalVisible] = useState(false);
   const [privateKey, setPrivateKey] = useState('');
   const [copiedKey, setCopiedKey] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      logScreenView('PayLinkDetails', 'PayLinkDetailsScreen');
+    }, [])
+  );
 
   useEffect(() => {
     loadTokens();
@@ -234,6 +241,7 @@ export default function PayLinkDetailsScreen() {
         );
 
         if (result.success) {
+          logEvent(analyticsEvents.deposit, { source: 'pay_link_claim', pay_link_id: payLink.id });
           setPrivacyCashModalVisible(false);
           Alert.alert(
             'Claim Successful',
@@ -291,10 +299,11 @@ export default function PayLinkDetailsScreen() {
       // Claim all tokens
       const result: ClaimResult = await claimAllTokens(secretKey, trimmedAddress, tokens);
       
+      logEvent(analyticsEvents.claimPublicly, { pay_link_id: payLink.id, token_count: result.totalTokens });
       // Close modal
       setClaimModalVisible(false);
       setWalletAddress('');
-      
+
       // Show result
       if (result.successfulTransfers === result.totalTokens) {
         Alert.alert(

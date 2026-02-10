@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useCallback } from 'react';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import {
   getPrivacyCashBalance,
@@ -25,6 +25,7 @@ import { isValidSolanaAddress, base64AddressToBase58 } from '../services/transfe
 import { getWalletErrorMessage } from '../utils/walletErrors';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
@@ -44,6 +45,12 @@ export default function PrivacyCashScreen() {
   const [withdrawError, setWithdrawError] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      logScreenView('PrivacyCash', 'PrivacyCashScreen');
+    }, [])
+  );
 
   const handleConnectAndLoadBalance = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -75,6 +82,7 @@ export default function PrivacyCashScreen() {
         const storage = null;
         const balances = await getPrivacyCashBalance(userPublicKey, signMessage, storage);
         setBalance(balances);
+        logEvent(analyticsEvents.walletConnect, { source: 'privacy_cash_screen' });
       });
     } catch (err: unknown) {
       console.error('[PrivacyCash] connect/balance error:', err);
@@ -157,6 +165,7 @@ export default function PrivacyCashScreen() {
         );
 
         if (result.success) {
+          logEvent(analyticsEvents.withdraw, { token: withdrawToken, amount });
           setWithdrawModalVisible(false);
           Alert.alert('Withdrawal successful', result.tx ? `Tx: ${result.tx}` : 'Done.', [{ text: 'OK' }]);
           setBalance((prev) => prev ? { ...prev, [withdrawToken.toLowerCase()]: Math.max(0, (prev[withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt'] - amount)) } : null);

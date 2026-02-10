@@ -5,7 +5,10 @@ import { useState, useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import { initFirebase } from './src/services/firebase';
 import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted } from './src/services/onboarding';
+
+initFirebase();
 
 export default function App() {
   const [hasMinted, setHasMinted] = useState<boolean | null>(null);

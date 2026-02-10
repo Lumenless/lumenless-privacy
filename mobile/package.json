@@ -37,6 +37,7 @@
     "expo-crypto": "~15.0.8",
     "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
+    "firebase": "^12.9.0",
     "path-browserify": "^1.0.1",
     "privacycash": "^1.1.12",
     "react": "19.1.0",
