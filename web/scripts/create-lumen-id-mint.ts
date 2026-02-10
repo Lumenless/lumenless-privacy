@@ -25,8 +25,14 @@
 
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { Connection, Keypair } from '@solana/web3.js';
-import { createMint } from '@solana/spl-token';
+import { Connection, Keypair, SystemProgram, Transaction } from '@solana/web3.js';
+import {
+  createInitializeNonTransferableMintInstruction,
+  createInitializeMint2Instruction,
+  ExtensionType,
+  getMintLen,
+  TOKEN_2022_PROGRAM_ID,
+} from '@solana/spl-token';
 import bs58 from 'bs58';
 
 const DEFAULT_RPC = 'https://api.mainnet-beta.solana.com';
@@ -91,16 +97,30 @@ async function main() {
   }
   console.log('');
 
-  console.log('Creating Lumen ID mint (decimals=0, no freeze authority)...');
-  const mintAddress = await createMint(
-    connection,
-    payer,
-    mintKeypair.publicKey, // mint authority = same keypair
-    null,                   // no freeze authority
-    0,                      // decimals (SBT / NFT style)
-    mintKeypair,
-    { commitment: 'confirmed' }
+  console.log('Creating Lumen ID mint (Token-2022, non-transferable SBT, decimals=0, no freeze authority)...');
+  const mint = mintKeypair.publicKey;
+  const mintAuthority = mintKeypair.publicKey;
+  const mintLen = getMintLen([ExtensionType.NonTransferable]);
+  const lamports = await connection.getMinimumBalanceForRentExemption(mintLen, 'confirmed');
+
+  const transaction = new Transaction().add(
+    SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: mint,
+      space: mintLen,
+      lamports,
+      programId: TOKEN_2022_PROGRAM_ID,
+    }),
+    createInitializeNonTransferableMintInstruction(mint, TOKEN_2022_PROGRAM_ID),
+    createInitializeMint2Instruction(mint, 0, mintAuthority, null, TOKEN_2022_PROGRAM_ID)
   );
+
+  const sig = await connection.sendTransaction(transaction, [payer, mintKeypair], {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+  });
+  await connection.confirmTransaction(sig, 'confirmed');
+  const mintAddress = mint;
 
   const secretBase58 = bs58.encode(mintKeypair.secretKey);
 

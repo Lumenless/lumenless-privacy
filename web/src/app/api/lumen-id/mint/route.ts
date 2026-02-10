@@ -12,7 +12,7 @@ import {
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
   getMinimumBalanceForRentExemptAccount,
-  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
@@ -33,9 +33,9 @@ const TX_FEE_BUFFER_LAMPORTS = 50_000;
  * Request: { address: string }
  * Response: { transaction: string } (base64 serialized VersionedTransaction)
  *
- * Required env (mint must already exist; create once with SPL token or Metaplex):
+ * Required env (mint must be Token-2022 non-transferable; create once with scripts/create-lumen-id-mint.ts):
  * - LUMEN_ID_TREASURY: Solana address to receive the 0.05 SOL
- * - LUMEN_ID_MINT: Public key of the Lumen ID token mint
+ * - LUMEN_ID_MINT: Public key of the Lumen ID token mint (Token-2022 with NonTransferable extension)
  * - LUMEN_ID_MINT_AUTHORITY: Base58 secret key of the mint authority keypair
  */
 export async function GET() {
@@ -73,6 +73,21 @@ export async function POST(request: NextRequest) {
     const treasuryPubkey = new PublicKey(treasury);
     const mint = new PublicKey(mintPubkey);
 
+    // Lumen ID must be a Token-2022 mint (non-transferable). Legacy mints cause "incorrect program id" when creating ATA.
+    const mintAccountInfo = await connection.getAccountInfo(mint);
+    if (!mintAccountInfo) {
+      return NextResponse.json({ error: 'Lumen ID mint account not found' }, { status: 400 });
+    }
+    if (!mintAccountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+      return NextResponse.json(
+        {
+          error:
+            'LUMEN_ID_MINT is not a Token-2022 mint. Create a new mint with: npx ts-node --esm scripts/create-lumen-id-mint.ts --payer <path> and set LUMEN_ID_MINT to the new address.',
+        },
+        { status: 400 }
+      );
+    }
+
     let mintAuthorityKeypair: Keypair;
     try {
       const secret = bs58.decode(mintAuthoritySecret);
@@ -85,7 +100,7 @@ export async function POST(request: NextRequest) {
       mint,
       userPubkey,
       false,
-      TOKEN_PROGRAM_ID,
+      TOKEN_2022_PROGRAM_ID,
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
@@ -132,7 +147,7 @@ export async function POST(request: NextRequest) {
           userAta,
           userPubkey,
           mint,
-          TOKEN_PROGRAM_ID,
+          TOKEN_2022_PROGRAM_ID,
           ASSOCIATED_TOKEN_PROGRAM_ID
         )
       );
@@ -145,7 +160,7 @@ export async function POST(request: NextRequest) {
         mintAuthorityKeypair.publicKey,
         1,
         [],
-        TOKEN_PROGRAM_ID
+        TOKEN_2022_PROGRAM_ID
       )
     );
 

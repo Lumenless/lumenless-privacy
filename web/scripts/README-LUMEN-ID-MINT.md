@@ -1,6 +1,6 @@
 # Creating the Lumen ID mint
 
-The Lumen ID is an SPL token mint used for soulbound IDs. You create it **once** on mainnet, then set the env vars for the API.
+The Lumen ID is a **Token-2022** mint with the **NonTransferable** extension (soulbound: cannot be transferred). You create it **once** on mainnet, then set the env vars for the API.
 
 ## Option A: Random mint address
 
@@ -9,7 +9,7 @@ cd web
 npx ts-node --esm scripts/create-lumen-id-mint.ts --payer ./path/to/your-payer-keypair.json
 ```
 
-The script will print `LUMEN_ID_MINT` and `LUMEN_ID_MINT_AUTHORITY`. Add them (and `LUMEN_ID_TREASURY`) to your env.
+The script will print `LUMEN_ID_MINT` and `LUMEN_ID_MINT_AUTHORITY`. Add them (and `LUMEN_ID_TREASURY`) to your env. The mint is created under the Token-2022 program and is non-transferable (soulbound).
 
 ## Option B: Vanity (nice) mint address
 
@@ -65,3 +65,7 @@ npx ts-node --esm scripts/create-lumen-id-mint.ts \
 ```
 
 Then set `LUMEN_ID_MINT_AUTHORITY` to the contents of `lumen-id-mint-authority.txt` and **do not commit** that file.
+
+## Non-transferable (soulbound)
+
+The script creates the mint under **Token-2022** with the **NonTransferable** extension. Holders cannot transfer the token to anyone else; it is soulbound to the wallet that minted it. If you already have a legacy SPL Token mint for Lumen ID, you must create a new Token-2022 mint and update `LUMEN_ID_MINT` (and optionally `LUMEN_ID_MINT_AUTHORITY`) in your env.

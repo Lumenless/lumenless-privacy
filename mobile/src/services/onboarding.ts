@@ -28,3 +28,8 @@ export async function hasMintedLumenId(): Promise<boolean> {
 export async function setLumenIdMinted(): Promise<void> {
   await SecureStore.setItemAsync(LUMEN_ID_MINTED_KEY, 'true');
 }
+
+/** For testing: clear the Lumen ID minted flag so onboarding/mint flow can be run again. */
+export async function clearLumenIdMinted(): Promise<void> {
+  await SecureStore.deleteItemAsync(LUMEN_ID_MINTED_KEY);
+}

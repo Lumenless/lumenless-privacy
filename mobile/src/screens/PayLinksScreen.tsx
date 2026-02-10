@@ -11,7 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { PayLinkModal, CreatePayLinkModal } from '../components';
@@ -20,6 +20,7 @@ import { usePayLinkBalances } from '../hooks/usePayLinkBalances';
 import * as Clipboard from 'expo-clipboard';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { ResetLumenIdContext } from '../../App';
 import { testNetworkConnectivity } from '../services/balances';
 import {
   getPrivacyCashBalance,
@@ -40,6 +41,7 @@ const PC_TOKENS: TokenKind[] = ['SOL', 'USDC', 'USDT'];
 export default function PayLinksScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
+  const resetLumenId = React.useContext(ResetLumenIdContext);
   const [payLinks, setPayLinks] = useState<PayLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -407,11 +409,32 @@ export default function PayLinksScreen() {
     </View>
   );
 
+  const handleResetLumenIdPress = () => {
+    Alert.alert(
+      'Reset Lumen ID (test)',
+      'This will clear the Lumen ID minted flag and show onboarding again. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reset', style: 'destructive', onPress: () => resetLumenId?.() },
+      ]
+    );
+  };
+
   const listHeader = (
     <>
       <View style={styles.header}>
-        <Text style={styles.title}>Lumenless</Text>
-        <Text style={styles.subtitle}>Receive payments privately</Text>
+        <View>
+          <Text style={styles.title}>Lumenless</Text>
+          <Text style={styles.subtitle}>Receive payments privately</Text>
+        </View>
+        {resetLumenId ? (
+          <Pressable
+            onPress={handleResetLumenIdPress}
+            style={({ pressed }) => [styles.resetLumenIdBtn, pressed && styles.resetLumenIdBtnPressed]}
+          >
+            <Text style={styles.resetLumenIdBtnText}>Reset Lumen ID</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* Private wallet — compact single-row card */}
@@ -618,7 +641,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: spacing.lg,
+  },
+  resetLumenIdBtn: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  resetLumenIdBtnPressed: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  resetLumenIdBtnText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
   },
   title: {
     ...typography.title,
