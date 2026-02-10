@@ -78,7 +78,8 @@ export async function getPrivacyCashBalance(
   console.log('[PrivacyCash] getBalance: calling API', url);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+  const timeoutMs = 60000; // 60s — balance API can be slow (RPC + Privacy Cash SDK)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -94,10 +95,17 @@ export async function getPrivacyCashBalance(
     if (!res.ok) {
       const text = await res.text();
       console.error('[PrivacyCash] getBalance: API error', res.status, text);
-      throw new Error(`Balance API error: ${res.status}`);
+      let errMsg = `Balance API error: ${res.status}`;
+      try {
+        const errData = JSON.parse(text) as { error?: string };
+        if (errData?.error) errMsg = errData.error;
+      } catch {
+        if (text) errMsg = text.slice(0, 200);
+      }
+      throw new Error(errMsg);
     }
 
-    const data = await res.json();
+    const data = (await res.json()) as { lamports?: number; usdc?: number; usdt?: number };
     console.log('[PrivacyCash] getBalance: response data', data);
 
     const sol = (data.lamports ?? 0) / LAMPORTS_PER_SOL;
@@ -109,7 +117,7 @@ export async function getPrivacyCashBalance(
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Balance request timed out');
+      throw new Error('Privacy Cash balance timed out. The network or RPC may be slow—try again in a moment.');
     }
     throw err;
   }

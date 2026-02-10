@@ -1,5 +1,6 @@
 {
   "functions": {
+    "src/app/api/privacycash/balance/route.ts": { "maxDuration": 60, "memory": 1024 },
     "src/app/api/privacycash/claim/route.ts": { "maxDuration": 300, "memory": 3009 },
     "src/app/api/privacycash/withdraw/route.ts": { "maxDuration": 300, "memory": 3009 },
     "src/app/api/lumen-id/mint/route.ts": { "maxDuration": 60, "memory": 1024 }
