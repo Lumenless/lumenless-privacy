@@ -212,6 +212,7 @@ export async function POST(request: NextRequest) {
         amount_in_lamports: amountLamports!,
         encryptionService,
         recipient: recipientPubkey,
+        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
       });
 
       console.log('[Withdraw API] SOL Withdraw successful:', result.tx);

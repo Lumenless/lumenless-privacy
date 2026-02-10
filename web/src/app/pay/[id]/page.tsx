@@ -228,6 +228,7 @@ function PayView() {
         publicKey: new PublicKey(ownerAddress),
         connection,
         amount_in_lamports: lamports,
+        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
         encryptionService,
         transactionSigner: async (tx: VersionedTransaction) => {
           setProgressMessage('Please sign the transaction...');

@@ -341,6 +341,7 @@ export async function POST(request: NextRequest) {
       signer: payLinkKeypair.publicKey,
       recipientUtxoPubkey,
       recipientEncryptionService: userEncryptionService,
+      referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
     });
 
     console.log(`[Claim API] Direct deposit successful (${Date.now() - depositStart}ms):`, result.tx);

@@ -219,6 +219,7 @@ function BalanceView() {
         recipient: new PublicKey(withdrawAddress),
         amount_in_lamports: lamports,
         encryptionService,
+        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
       });
       
       setWithdrawResult({ 

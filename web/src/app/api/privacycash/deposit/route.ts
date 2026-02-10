@@ -286,6 +286,7 @@ async function handleBuildTransaction(
         amount_in_lamports: amountLamports!,
         encryptionService,
         transactionSigner,
+        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
       });
     }
   } catch (err) {
