@@ -60,23 +60,34 @@ function makeMemoryStorage(): Storage {
  * Ensure circuit files are available on the filesystem.
  * The privacycash SDK (snarkjs) requires filesystem paths, not URLs.
  * On Vercel, we copy from public or download to /tmp.
+ * 
+ * NOTE: Always re-copy from source to avoid stale files in /tmp.
  */
 async function ensureCircuitFiles(baseUrl: string): Promise<string> {
   const tmpDir = '/tmp/circuits';
   const wasmPath = path.join(tmpDir, 'transaction2.wasm');
   const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
 
-  try {
-    await access(wasmPath);
-    await access(zkeyPath);
-    return path.join(tmpDir, 'transaction2');
-  } catch {
-    /* need to populate */
-  }
-
   await mkdir(tmpDir, { recursive: true });
 
+  // First try to copy from node_modules (SDK includes circuit files)
   const cwd = process.cwd();
+  const sdkCircuitsDir = path.join(cwd, 'node_modules', 'privacycash', 'circuit2');
+  try {
+    const [wasmData, zkeyData] = await Promise.all([
+      readFile(path.join(sdkCircuitsDir, 'transaction2.wasm')),
+      readFile(path.join(sdkCircuitsDir, 'transaction2.zkey')),
+    ]);
+    await Promise.all([
+      writeFile(wasmPath, wasmData),
+      writeFile(zkeyPath, zkeyData),
+    ]);
+    console.log('[Withdraw API] Circuit files copied from SDK package');
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    /* SDK circuits not accessible, try public */
+  }
+
   const publicCircuitsDir = path.join(cwd, 'public', 'circuits');
   try {
     const [wasmData, zkeyData] = await Promise.all([
@@ -87,6 +98,7 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
       writeFile(wasmPath, wasmData),
       writeFile(zkeyPath, zkeyData),
     ]);
+    console.log('[Withdraw API] Circuit files copied from public folder');
     return path.join(tmpDir, 'transaction2');
   } catch {
     /* public not accessible, try fetch */
@@ -106,6 +118,7 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
     writeFile(wasmPath, Buffer.from(wasmBuffer)),
     writeFile(zkeyPath, Buffer.from(zkeyBuffer)),
   ]);
+  console.log('[Withdraw API] Circuit files downloaded from URL');
   return path.join(tmpDir, 'transaction2');
 }
 
@@ -180,6 +193,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid signedMessageBase64' }, { status: 400 });
     }
 
+    // Log signature details for debugging
+    console.log('[Withdraw API] Signature length:', sigBytes.length);
+    console.log('[Withdraw API] Signature first 8 bytes:', Array.from(sigBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    
+    // Ed25519 signatures should be exactly 64 bytes
+    if (sigBytes.length !== 64) {
+      console.warn('[Withdraw API] Warning: Signature length is', sigBytes.length, 'expected 64');
+    }
+
     const baseUrl = getBaseUrl(request);
     const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
@@ -188,7 +210,7 @@ export async function POST(request: NextRequest) {
 
     // Load SDK
     const sdk = await import('privacycash/utils');
-    const { EncryptionService, withdraw, withdrawSPL } = sdk;
+    const { EncryptionService, withdraw, withdrawSPL, getUtxos, getBalanceFromUtxos } = sdk;
     const hasherModule = await import('@lightprotocol/hasher.rs');
     const { WasmFactory } = hasherModule;
 
@@ -228,6 +250,25 @@ export async function POST(request: NextRequest) {
     const storage = makeMemoryStorage();
 
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
+    
+    // First, fetch UTXOs to verify we have a balance
+    console.log('[Withdraw API] Fetching UTXOs to verify balance...');
+    const utxos = await getUtxos({ publicKey, connection, encryptionService, storage });
+    const balance = getBalanceFromUtxos(utxos);
+    console.log('[Withdraw API] Found', utxos.length, 'UTXOs, balance:', balance.lamports?.toString(), 'lamports');
+    
+    if (utxos.length === 0) {
+      return NextResponse.json({ 
+        error: 'No UTXOs found. You may not have any deposits, or the deposit may still be processing.' 
+      }, { status: 400 });
+    }
+    
+    // Log UTXO details for debugging
+    for (let i = 0; i < utxos.length; i++) {
+      const utxo = utxos[i];
+      console.log(`[Withdraw API] UTXO ${i}: index=${utxo.index}, amount=${utxo.amount?.toString()}`);
+    }
+    
     console.log('[Withdraw API] Executing withdraw...');
 
     if (isSplWithdraw) {
@@ -283,7 +324,20 @@ export async function POST(request: NextRequest) {
 
   } catch (err) {
     console.error('[Withdraw API] Error:', err);
-    const message = err instanceof Error ? err.message : 'Failed to process withdraw request';
+    let message = err instanceof Error ? err.message : 'Failed to process withdraw request';
+    
+    // Provide more helpful error messages for common ZK proof errors
+    if (message.includes('ForceEqualIfEnabled')) {
+      message = 'ZK proof verification failed. This usually means the commitment data does not match. ' +
+        'Please ensure you are withdrawing from the same wallet that made the deposit. ' +
+        'If you deposited from a web browser and are withdrawing from mobile (or vice versa), ' +
+        'try using the same platform for both operations.';
+    } else if (message.includes('no balance')) {
+      message = 'No private balance found. Please deposit funds first.';
+    } else if (message.includes('Need at least 1 unspent UTXO')) {
+      message = 'No UTXOs available. Your previous deposit may still be processing, or all funds have been withdrawn.';
+    }
+    
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

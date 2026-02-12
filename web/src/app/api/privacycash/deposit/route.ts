@@ -62,23 +62,34 @@ function makeMemoryStorage(): Storage {
 /**
  * Ensure circuit files are available on the filesystem.
  * The privacycash SDK (snarkjs) requires filesystem paths, not URLs.
+ * 
+ * NOTE: Always re-copy from source to avoid stale files in /tmp.
  */
 async function ensureCircuitFiles(baseUrl: string): Promise<string> {
   const tmpDir = '/tmp/circuits';
   const wasmPath = path.join(tmpDir, 'transaction2.wasm');
   const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
 
-  try {
-    await access(wasmPath);
-    await access(zkeyPath);
-    return path.join(tmpDir, 'transaction2');
-  } catch {
-    /* need to populate */
-  }
-
   await mkdir(tmpDir, { recursive: true });
 
+  // First try to copy from node_modules (SDK includes circuit files)
   const cwd = process.cwd();
+  const sdkCircuitsDir = path.join(cwd, 'node_modules', 'privacycash', 'circuit2');
+  try {
+    const [wasmData, zkeyData] = await Promise.all([
+      readFile(path.join(sdkCircuitsDir, 'transaction2.wasm')),
+      readFile(path.join(sdkCircuitsDir, 'transaction2.zkey')),
+    ]);
+    await Promise.all([
+      writeFile(wasmPath, wasmData),
+      writeFile(zkeyPath, zkeyData),
+    ]);
+    console.log('[Deposit API] Circuit files copied from SDK package');
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    /* SDK circuits not accessible, try public */
+  }
+
   const publicCircuitsDir = path.join(cwd, 'public', 'circuits');
   try {
     const [wasmData, zkeyData] = await Promise.all([
@@ -89,6 +100,7 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
       writeFile(wasmPath, wasmData),
       writeFile(zkeyPath, zkeyData),
     ]);
+    console.log('[Deposit API] Circuit files copied from public folder');
     return path.join(tmpDir, 'transaction2');
   } catch {
     /* public not accessible, try fetch */
@@ -108,6 +120,7 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
     writeFile(wasmPath, Buffer.from(wasmBuffer)),
     writeFile(zkeyPath, Buffer.from(zkeyBuffer)),
   ]);
+  console.log('[Deposit API] Circuit files downloaded from URL');
   return path.join(tmpDir, 'transaction2');
 }
 
