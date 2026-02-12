@@ -230,10 +230,12 @@ function WithdrawView() {
       if (isMobileWebView) {
         // Request signature from mobile app
         sigBytes = await requestMobileSignature(messageBytes);
-      } else {
+      } else if (browserSigner?.signMessage) {
         // Use browser wallet
-        const signature = await browserSigner!.signMessage(messageBytes);
+        const signature = await browserSigner.signMessage(messageBytes);
         sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      } else {
+        throw new Error('No signer available');
       }
       
       setProgressMessage('Loading SDK...');
@@ -354,10 +356,12 @@ function WithdrawView() {
       if (isMobileWebView) {
         // Request signature from mobile app
         sigBytes = await requestMobileSignature(messageBytes);
-      } else {
+      } else if (browserSigner?.signMessage) {
         // Use browser wallet
-        const signature = await browserSigner!.signMessage(messageBytes);
+        const signature = await browserSigner.signMessage(messageBytes);
         sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      } else {
+        throw new Error('No signer available');
       }
       
       setProgressMessage('Loading SDK...');
