@@ -139,11 +139,17 @@ export default function PayLinksScreen() {
         deactivateKeepAwake('privacycash-balance');
       }
     }, SAFETY_TIMEOUT_MS);
+    
+    let userPublicKey: string | null = null;
+    let sigBase64: string | null = null;
+    
     try {
       console.log('[PayLinksScreen] Connect wallet: loading MWA...');
       const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
       const { Buffer } = await import('buffer');
-      console.log('[PayLinksScreen] Connect wallet: starting transact (authorize + balance)...');
+      
+      // Step 1: Authorize and sign message (quick MWA interaction)
+      console.log('[PayLinksScreen] Connect wallet: starting transact (authorize + sign)...');
       await mwa.transact(async (wallet) => {
         console.log('[PayLinksScreen] Connect wallet: calling wallet.authorize...');
         const authResult = await wallet.authorize({
@@ -151,26 +157,30 @@ export default function PayLinksScreen() {
           identity: { name: 'Lumenless', uri: 'https://lumenless.com', icon: 'icon.png' },
         });
         const base64Address = authResult.accounts[0].address;
-        const userPublicKey = base64AddressToBase58(base64Address);
+        userPublicKey = base64AddressToBase58(base64Address);
         console.log('[PayLinksScreen] Connect wallet: authorized, address:', userPublicKey);
         setPcUserAddress(userPublicKey);
         
-        // Sign and save signature for future balance refreshes
-        const signMessage = async (message: Uint8Array): Promise<Uint8Array> => {
-          const result = await wallet.signMessages({ addresses: [base64Address], payloads: [message] });
-          const sig = result[0];
-          // Save signature as base64 for reuse
-          const sigBase64 = Buffer.from(sig).toString('base64');
-          setPcSignature(sigBase64);
-          return sig;
-        };
-        console.log('[PayLinksScreen] Connect wallet: fetching PrivacyCash balance...');
-        const balances = await getPrivacyCashBalance(userPublicKey, signMessage, null);
+        // Sign derivation message
+        const derivationMessage = new TextEncoder().encode('Privacy Money account sign in');
+        console.log('[PayLinksScreen] Connect wallet: signing derivation message...');
+        const result = await wallet.signMessages({ addresses: [base64Address], payloads: [derivationMessage] });
+        const sig = result[0];
+        sigBase64 = Buffer.from(sig).toString('base64');
+        setPcSignature(sigBase64);
+        console.log('[PayLinksScreen] Connect wallet: signed, closing MWA transact');
+      });
+      
+      // Step 2: Fetch balance OUTSIDE MWA transact (screen is now interactive)
+      if (userPublicKey && sigBase64) {
+        console.log('[PayLinksScreen] Connect wallet: fetching PrivacyCash balance (outside MWA)...');
+        const balances = await getPrivacyCashBalanceWithSignature(userPublicKey, sigBase64);
         console.log('[PayLinksScreen] Connect wallet: balance received', { sol: balances.sol, usdc: balances.usdc });
         setPcBalance(balances);
         logEvent(analyticsEvents.walletConnect, { source: 'pay_links_private_wallet' });
-      });
-      console.log('[PayLinksScreen] Connect wallet: transact finished');
+      }
+      
+      console.log('[PayLinksScreen] Connect wallet: done');
     } catch (err: unknown) {
       console.error('[PayLinksScreen] Connect wallet: error', err);
       setPcError(getWalletErrorMessage(err, 'Could not load balance. Connect your wallet and try again.'));
