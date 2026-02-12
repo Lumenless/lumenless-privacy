@@ -16,7 +16,6 @@ const DERIVATION_MESSAGE = 'Privacy Money account sign in';
 const TOKENS = {
   SOL: { symbol: 'SOL', label: '◎ SOL', decimals: 9, mint: null },
   USDC: { symbol: 'USDC', label: '$ USDC', decimals: 6, mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
-  USDT: { symbol: 'USDT', label: '$ USDT', decimals: 6, mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' },
 } as const;
 
 type TokenType = keyof typeof TOKENS;
@@ -37,7 +36,6 @@ function createMemoryStorage(): Storage {
 interface Balances {
   SOL: number;
   USDC: number;
-  USDT: number;
 }
 
 /** Post message to parent (mobile WebView) */
@@ -187,7 +185,7 @@ function WithdrawView() {
     try {
       const parsed = JSON.parse(balancesParam);
       // Validate it has the expected structure
-      if (typeof parsed.SOL === 'number' && typeof parsed.USDC === 'number' && typeof parsed.USDT === 'number') {
+      if (typeof parsed.SOL === 'number' && typeof parsed.USDC === 'number') {
         return parsed as Balances;
       }
     } catch {
@@ -315,20 +313,17 @@ function WithdrawView() {
       const publicKey = new PublicKey(ownerAddress);
       
       // Fetch all balances in parallel
-      const [solUtxos, usdcUtxos, usdtUtxos] = await Promise.all([
+      const [solUtxos, usdcUtxos] = await Promise.all([
         getUtxos({ publicKey, connection, encryptionService, storage }),
         getUtxosSPL({ publicKey, connection, encryptionService, storage, mintAddress: TOKENS.USDC.mint! }),
-        getUtxosSPL({ publicKey, connection, encryptionService, storage, mintAddress: TOKENS.USDT.mint! }),
       ]);
       
       const solBalance = getBalanceFromUtxos(solUtxos);
       const usdcBalance = getBalanceFromUtxosSPL(usdcUtxos);
-      const usdtBalance = getBalanceFromUtxosSPL(usdtUtxos);
       
       const newBalances: Balances = {
         SOL: solBalance.lamports,
         USDC: usdcBalance.base_units ?? usdcBalance.amount ?? 0,
-        USDT: usdtBalance.base_units ?? usdtBalance.amount ?? 0,
       };
       
       setBalances(newBalances);
@@ -501,7 +496,7 @@ function WithdrawView() {
           referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
         });
       } else {
-        // SPL withdraw (USDC or USDT)
+        // SPL withdraw (USDC)
         result = await withdrawSPL({
           lightWasm,
           storage,

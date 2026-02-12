@@ -123,8 +123,8 @@ export default function PrivacyCashScreen() {
       return;
     }
 
-    const bal = balance ?? { sol: 0, usdc: 0, usdt: 0 };
-    const maxAmount = withdrawToken === 'SOL' ? bal.sol : withdrawToken === 'USDC' ? bal.usdc : bal.usdt;
+    const bal = balance ?? { sol: 0, usdc: 0 };
+    const maxAmount = withdrawToken === 'SOL' ? bal.sol : bal.usdc;
     if (amount > maxAmount) {
       setWithdrawError(`Insufficient balance (max ${maxAmount})`);
       return;
@@ -168,7 +168,7 @@ export default function PrivacyCashScreen() {
           logEvent(analyticsEvents.withdraw, { token: withdrawToken, amount });
           setWithdrawModalVisible(false);
           Alert.alert('Withdrawal successful', result.tx ? `Tx: ${result.tx}` : 'Done.', [{ text: 'OK' }]);
-          setBalance((prev) => prev ? { ...prev, [withdrawToken.toLowerCase()]: Math.max(0, (prev[withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt'] - amount)) } : null);
+          setBalance((prev) => prev ? { ...prev, [withdrawToken.toLowerCase()]: Math.max(0, (prev[withdrawToken === 'SOL' ? 'sol' : 'usdc'] - amount)) } : null);
         } else {
           setWithdrawError(result.error ?? 'Withdrawal failed');
         }
@@ -235,7 +235,7 @@ export default function PrivacyCashScreen() {
                 </Pressable>
               </View>
               {tokens.map((token) => {
-                const value = balance ? balance[token === 'SOL' ? 'sol' : token === 'USDC' ? 'usdc' : 'usdt'] : 0;
+                const value = balance ? balance[token === 'SOL' ? 'sol' : 'usdc'] : 0;
                 return (
                   <View key={token} style={styles.balanceRow}>
                     <Text style={styles.balanceSymbol}>{PRIVACYCASH_TOKEN_LABELS[token]}</Text>

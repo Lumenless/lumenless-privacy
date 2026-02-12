@@ -23,7 +23,7 @@ const WITHDRAW_WEB_URL = process.env.EXPO_PUBLIC_LUMENLESS_WEB_URL
   : 'https://lumenless.com/privacycash/withdraw';
 
 export type WebViewWithdrawParams = {
-  token?: 'SOL' | 'USDC' | 'USDT';
+  token?: 'SOL' | 'USDC';
   recipient?: string;
   amount?: string;
   walletAddress?: string;
@@ -31,7 +31,6 @@ export type WebViewWithdrawParams = {
   balances?: {
     SOL: number;
     USDC: number;
-    USDT: number;
   };
   // Note: callbacks can't be passed via navigation params
   // Success is communicated back via navigation focus event
@@ -44,7 +43,7 @@ interface WebViewMessage {
   tx?: string;
   error?: string;
   address?: string;
-  balances?: { SOL: number; USDC: number; USDT: number };
+  balances?: { SOL: number; USDC: number };
   token?: string;
   amount?: string;
   recipient?: string;

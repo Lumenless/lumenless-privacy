@@ -16,7 +16,6 @@ import { Buffer } from 'buffer';
 
 const LAMPORTS_PER_SOL = 1e9;
 const USDC_BASE_UNITS = 1e6;
-const USDT_BASE_UNITS = 1e6;
 
 export const DERIVATION_MESSAGE = 'Privacy Money account sign in';
 
@@ -28,7 +27,6 @@ const PRIVACYCASH_API_BASE_URL =
 export type PrivacyCashBalances = {
   sol: number;
   usdc: number;
-  usdt: number;
 };
 
 export type WithdrawResult = {
@@ -38,18 +36,16 @@ export type WithdrawResult = {
   isPartial?: boolean; // True if not all requested amount could be withdrawn
 };
 
-export type TokenKind = 'SOL' | 'USDC' | 'USDT';
+export type TokenKind = 'SOL' | 'USDC';
 
 export const TOKEN_DECIMALS: Record<TokenKind, number> = {
   SOL: 9,
   USDC: 6,
-  USDT: 6,
 };
 
 export const PRIVACYCASH_TOKEN_LABELS: Record<TokenKind, string> = {
   SOL: 'SOL',
   USDC: 'USDC',
-  USDT: 'USDT',
 };
 
 /**
@@ -110,10 +106,9 @@ export async function getPrivacyCashBalance(
 
     const sol = (data.lamports ?? 0) / LAMPORTS_PER_SOL;
     const usdc = (data.usdc ?? 0) / USDC_BASE_UNITS;
-    const usdt = (data.usdt ?? 0) / USDT_BASE_UNITS;
 
-    console.log('[PrivacyCash] getBalance: done', { sol, usdc, usdt });
-    return { sol, usdc, usdt };
+    console.log('[PrivacyCash] getBalance: done', { sol, usdc });
+    return { sol, usdc };
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
@@ -169,10 +164,9 @@ export async function getPrivacyCashBalanceWithSignature(
 
     const sol = (data.lamports ?? 0) / LAMPORTS_PER_SOL;
     const usdc = (data.usdc ?? 0) / USDC_BASE_UNITS;
-    const usdt = (data.usdt ?? 0) / USDT_BASE_UNITS;
 
-    console.log('[PrivacyCash] getBalanceWithSignature: done', { sol, usdc, usdt });
-    return { sol, usdc, usdt };
+    console.log('[PrivacyCash] getBalanceWithSignature: done', { sol, usdc });
+    return { sol, usdc };
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
@@ -190,7 +184,7 @@ export async function getPrivacyCashBalanceWithSignature(
  * 2. Generates ZK proof
  * 3. Sends transaction to PrivacyCash relayer
  * 
- * @param token - Token to withdraw (SOL, USDC, USDT)
+ * @param token - Token to withdraw (SOL, USDC)
  * @param amount - Amount to withdraw (in human units, e.g. 0.1 SOL)
  * @param destinationAddress - Where to send the withdrawn funds
  * @param userPublicKey - User's wallet public key (base58)
@@ -232,7 +226,7 @@ export async function withdrawFromPrivacyCash(
     console.log('[PrivacyCash] withdraw: calling backend API...');
 
     // Convert amount to base units
-    const isSpl = token === 'USDC' || token === 'USDT';
+    const isSpl = token === 'USDC';
     const decimals = TOKEN_DECIMALS[token];
     const baseUnits = Math.floor(amount * Math.pow(10, decimals));
 
@@ -243,7 +237,7 @@ export async function withdrawFromPrivacyCash(
     };
 
     if (isSpl) {
-      requestBody.mint = token === 'USDC' ? USDC_MINT : USDT_MINT;
+      requestBody.mint = USDC_MINT;
       requestBody.amountBaseUnits = baseUnits;
     } else {
       requestBody.amountLamports = baseUnits;
@@ -311,7 +305,6 @@ export async function withdrawFromPrivacyCash(
 
 // Token mint addresses
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
 export type DepositResult = {
   success: boolean;
@@ -328,7 +321,7 @@ export type DepositResult = {
  * 3. Sign the transaction on mobile
  * 4. Call backend again to submit to PrivacyCash relayer
  * 
- * @param token - Token to deposit (SOL, USDC, USDT)
+ * @param token - Token to deposit (SOL, USDC)
  * @param amount - Amount to deposit (in human units, e.g. 0.1 SOL)
  * @param userPublicKey - User's wallet public key (base58)
  * @param signMessage - Function to sign a message
@@ -362,7 +355,7 @@ export async function depositToPrivacyCash(
     console.log('[PrivacyCash] deposit: building transaction via backend...');
 
     // Convert amount to base units
-    const isSpl = token === 'USDC' || token === 'USDT';
+    const isSpl = token === 'USDC';
     const decimals = TOKEN_DECIMALS[token];
     const baseUnits = Math.floor(amount * Math.pow(10, decimals));
 
@@ -372,7 +365,7 @@ export async function depositToPrivacyCash(
     };
 
     if (isSpl) {
-      buildBody.mint = token === 'USDC' ? USDC_MINT : USDT_MINT;
+      buildBody.mint = USDC_MINT;
       buildBody.amountBaseUnits = baseUnits;
     } else {
       buildBody.amountLamports = baseUnits;

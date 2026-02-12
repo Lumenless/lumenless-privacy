@@ -38,7 +38,7 @@ import { VersionedTransaction } from '@solana/web3.js';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
-const PC_TOKENS: TokenKind[] = ['SOL', 'USDC', 'USDT'];
+const PC_TOKENS: TokenKind[] = ['SOL', 'USDC'];
 
 export default function PayLinksScreen() {
   const insets = useSafeAreaInsets();
@@ -166,7 +166,7 @@ export default function PayLinksScreen() {
         };
         console.log('[PayLinksScreen] Connect wallet: fetching PrivacyCash balance...');
         const balances = await getPrivacyCashBalance(userPublicKey, signMessage, null);
-        console.log('[PayLinksScreen] Connect wallet: balance received', { sol: balances.sol, usdc: balances.usdc, usdt: balances.usdt });
+        console.log('[PayLinksScreen] Connect wallet: balance received', { sol: balances.sol, usdc: balances.usdc });
         setPcBalance(balances);
         logEvent(analyticsEvents.walletConnect, { source: 'pay_links_private_wallet' });
       });
@@ -197,7 +197,7 @@ export default function PayLinksScreen() {
     setPcError(null);
     try {
       const balances = await getPrivacyCashBalanceWithSignature(pcUserAddress, pcSignature);
-      console.log('[PayLinksScreen] refreshPcBalance: done', { sol: balances.sol, usdc: balances.usdc, usdt: balances.usdt });
+      console.log('[PayLinksScreen] refreshPcBalance: done', { sol: balances.sol, usdc: balances.usdc });
       setPcBalance(balances);
     } catch (err) {
       console.error('[PayLinksScreen] refreshPcBalance: error', err);
@@ -231,12 +231,11 @@ export default function PayLinksScreen() {
     navigation.navigate('WebViewWithdraw', {
       token: token || 'SOL',
       walletAddress: pcUserAddress || undefined,
-      // Pass balances in BASE UNITS (lamports for SOL, 1e6 for USDC/USDT)
+      // Pass balances in BASE UNITS (lamports for SOL, 1e6 for USDC)
       // pcBalance stores human-readable values, so we convert back
       balances: pcBalance ? {
         SOL: Math.round(pcBalance.sol * 1e9),   // Convert SOL to lamports
         USDC: Math.round(pcBalance.usdc * 1e6), // Convert to USDC base units
-        USDT: Math.round(pcBalance.usdt * 1e6), // Convert to USDT base units
       } : undefined,
     });
     // Note: Balance will refresh automatically when screen focuses
@@ -258,8 +257,8 @@ export default function PayLinksScreen() {
       setWithdrawError('Enter a valid amount');
       return;
     }
-    const bal = pcBalance ?? { sol: 0, usdc: 0, usdt: 0 };
-    const maxAmount = withdrawToken === 'SOL' ? bal.sol : withdrawToken === 'USDC' ? bal.usdc : bal.usdt;
+    const bal = pcBalance ?? { sol: 0, usdc: 0 };
+    const maxAmount = withdrawToken === 'SOL' ? bal.sol : bal.usdc;
     if (amount > maxAmount) {
       setWithdrawError(`Insufficient balance (max ${maxAmount})`);
       return;
@@ -301,9 +300,9 @@ export default function PayLinksScreen() {
             prev
               ? {
                   ...prev,
-                  [withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt']: Math.max(
+                  [withdrawToken === 'SOL' ? 'sol' : 'usdc']: Math.max(
                     0,
-                    (prev[withdrawToken === 'SOL' ? 'sol' : withdrawToken === 'USDC' ? 'usdc' : 'usdt'] - amount)
+                    (prev[withdrawToken === 'SOL' ? 'sol' : 'usdc'] - amount)
                   ),
                 }
               : null
@@ -493,7 +492,7 @@ export default function PayLinksScreen() {
             <Text style={styles.privateWalletBalancesCompact} numberOfLines={1}>
               {PC_TOKENS.map((token) => {
                 const val = pcBalance
-                  ? pcBalance[token === 'SOL' ? 'sol' : token === 'USDC' ? 'usdc' : 'usdt']
+                  ? pcBalance[token === 'SOL' ? 'sol' : 'usdc']
                   : 0;
                 return `${PRIVACYCASH_TOKEN_LABELS[token]} ${formatPcBalance(val)}`;
               }).join(' · ')}
