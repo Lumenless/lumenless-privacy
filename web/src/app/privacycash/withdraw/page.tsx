@@ -355,6 +355,59 @@ function WithdrawView() {
     ? (currentBalance / Math.pow(10, tokenConfig.decimals)).toFixed(tokenConfig.decimals === 9 ? 4 : 2)
     : '---';
 
+  // Fee config state
+  const [feeConfig, setFeeConfig] = useState<{
+    withdraw_fee_rate: number;
+    withdraw_rent_fee: number;
+    rent_fees: Record<string, number>;
+  } | null>(null);
+
+  // Fetch fee config on mount
+  useEffect(() => {
+    const fetchFeeConfig = async () => {
+      try {
+        const res = await fetch('https://api3.privacycash.org/config');
+        const config = await res.json();
+        setFeeConfig(config);
+      } catch (err) {
+        console.error('Failed to fetch fee config:', err);
+      }
+    };
+    fetchFeeConfig();
+  }, []);
+
+  // Calculate receiver amount after fees
+  const receiverAmount = useMemo(() => {
+    if (!feeConfig || !withdrawAmount) return null;
+    
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount) || amount <= 0) return null;
+    
+    const baseUnits = Math.floor(amount * Math.pow(10, tokenConfig.decimals));
+    
+    let feeBaseUnits: number;
+    if (selectedToken === 'SOL') {
+      // SOL fee: amount * fee_rate + 1 SOL * rent_fee
+      feeBaseUnits = Math.floor(
+        baseUnits * feeConfig.withdraw_fee_rate + 
+        1e9 * feeConfig.withdraw_rent_fee
+      );
+    } else {
+      // SPL token fee: amount * fee_rate + units_per_token * token_rent_fee
+      const tokenName = selectedToken.toLowerCase();
+      const tokenRentFee = feeConfig.rent_fees?.[tokenName] || 0;
+      feeBaseUnits = Math.floor(
+        baseUnits * feeConfig.withdraw_fee_rate + 
+        Math.pow(10, tokenConfig.decimals) * tokenRentFee
+      );
+    }
+    
+    const receiverBaseUnits = baseUnits - feeBaseUnits;
+    if (receiverBaseUnits <= 0) return 0;
+    
+    return receiverBaseUnits / Math.pow(10, tokenConfig.decimals);
+  }, [feeConfig, withdrawAmount, selectedToken, tokenConfig.decimals]);
+
   // Handle withdraw
   const handleWithdraw = useCallback(async () => {
     if (!ownerAddress || !withdrawAddress || !withdrawAmount) {
@@ -874,6 +927,21 @@ function WithdrawView() {
                   MAX
                 </button>
               </div>
+
+              {/* Receiver Amount (after fees) */}
+              {withdrawAmount && receiverAmount !== null && (
+                <p style={{
+                  fontSize: '13px',
+                  color: receiverAmount > 0 ? '#a1a1aa' : '#ef4444',
+                  marginBottom: '12px',
+                  marginTop: '-4px',
+                }}>
+                  {receiverAmount > 0 
+                    ? `After fees, receiver will get ${receiverAmount.toFixed(tokenConfig.decimals === 9 ? 4 : 2)} ${selectedToken}`
+                    : 'Amount too low to cover fees'
+                  }
+                </p>
+              )}
 
               {/* Error Message */}
               {error && <p style={styles.errorText}>{error}</p>}
