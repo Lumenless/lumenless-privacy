@@ -441,7 +441,7 @@ function PayView() {
               {/* Secondary link - like "Enter card details" */}
               <div className="flex items-center justify-center gap-2 pt-2">
                 <span className="text-2xl">🔐</span>
-                <span className="text-sm text-gray-500">PrivacyCash deposits - coming soon</span>
+                {/* <span className="text-sm text-gray-500">PrivacyCash deposits - coming soon</span> */}
               </div>
             </div>
           </div>
