@@ -168,16 +168,9 @@ export default function PayLinksScreen() {
     }
   }, []);
 
-  // Refresh balance when screen comes into focus (e.g., after returning from WebView withdraw)
-  useFocusEffect(
-    useCallback(() => {
-      // Only refresh if already connected (don't trigger wallet connection)
-      if (pcUserAddress && !pcLoading) {
-        console.log('[PayLinksScreen] Screen focused - refreshing balance');
-        handleConnectAndLoadBalance();
-      }
-    }, [pcUserAddress, pcLoading, handleConnectAndLoadBalance])
-  );
+  // Note: We intentionally don't auto-refresh balance on screen focus
+  // because handleConnectAndLoadBalance triggers MWA authorization dialog.
+  // User can manually tap "Connect wallet" again to refresh after withdraw.
 
   const openWithdrawModal = useCallback((token: TokenKind) => {
     setWithdrawToken(token);
