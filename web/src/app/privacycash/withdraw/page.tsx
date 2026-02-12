@@ -61,6 +61,17 @@ function requestMobileSignature(message: Uint8Array): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const requestId = Math.random().toString(36).substring(7);
     
+    // Check if we're actually in a WebView
+    const hasReactNativeWebView = typeof window !== 'undefined' && 
+      !!(window as unknown as { ReactNativeWebView?: unknown }).ReactNativeWebView;
+    
+    console.log('[Withdraw] Requesting mobile signature, requestId:', requestId, 'hasWebView:', hasReactNativeWebView);
+    
+    if (!hasReactNativeWebView) {
+      reject(new Error('Not running in mobile WebView. Please use the mobile app.'));
+      return;
+    }
+    
     // Store the promise handlers
     pendingSignatureRequests.set(requestId, { resolve, reject });
     
@@ -74,7 +85,8 @@ function requestMobileSignature(message: Uint8Array): Promise<Uint8Array> {
     setTimeout(() => {
       if (pendingSignatureRequests.has(requestId)) {
         pendingSignatureRequests.delete(requestId);
-        reject(new Error('Signature request timed out'));
+        console.error('[Withdraw] Signature request timed out, requestId:', requestId);
+        reject(new Error('Signature request timed out. Please try again.'));
       }
     }, 60000);
   });
@@ -172,10 +184,15 @@ function WithdrawView() {
   useEffect(() => {
     if (!isMobileWebView) return;
     
+    console.log('[Withdraw] Setting up message listener for mobile');
+    
     const handleMessage = (event: MessageEvent) => {
+      console.log('[Withdraw] Received message event:', typeof event.data, event.data?.toString?.()?.slice(0, 100));
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        console.log('[Withdraw] Parsed message type:', data?.type);
         if (data.type === 'sign_message_response' || data.type === 'sign_message_error') {
+          console.log('[Withdraw] Handling signature response');
           handleMobileSignatureResponse(data);
         }
       } catch {

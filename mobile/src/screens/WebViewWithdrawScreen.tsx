@@ -13,6 +13,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { Buffer } from 'buffer';
 import { colors, spacing, typography } from '../theme';
 import { logEvent, analyticsEvents } from '../services/firebase';
 
@@ -81,7 +82,7 @@ export default function WebViewWithdrawScreen() {
         });
         
         // Decode the base64 message
-        const messageBytes = Uint8Array.from(atob(messageBase64), c => c.charCodeAt(0));
+        const messageBytes = new Uint8Array(Buffer.from(messageBase64, 'base64'));
         
         // Sign the message
         const signResult = await wallet.signMessages({
@@ -91,7 +92,7 @@ export default function WebViewWithdrawScreen() {
         
         // Encode signature as base64
         const signatureBytes = signResult[0];
-        const signatureBase64 = btoa(String.fromCharCode(...signatureBytes));
+        const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
         
         // Send signature back to WebView
         const responseScript = `
@@ -208,19 +209,35 @@ export default function WebViewWithdrawScreen() {
     setIsLoading(false);
   }, []);
   
-  // Inject script to detect wallet connection
+  // Inject script to set up mobile WebView environment
   const injectedJavaScript = `
     (function() {
-      // Ensure ReactNativeWebView is available
-      if (!window.ReactNativeWebView) {
-        window.ReactNativeWebView = {
-          postMessage: function(msg) {
-            window.postMessage(msg, '*');
-          }
-        };
-      }
+      console.log('[Lumenless] Injected JS starting, ReactNativeWebView exists:', !!window.ReactNativeWebView);
       
-      // Log that we're in mobile mode
+      // Store original postMessage
+      var originalPostMessage = window.postMessage;
+      
+      // Override window.postMessage to also dispatch an event
+      // This ensures our message listener catches injected messages
+      window.postMessage = function(message, targetOrigin) {
+        // Call original
+        originalPostMessage.call(window, message, targetOrigin);
+        
+        // Also dispatch a custom event that the page can listen to
+        try {
+          var event = new MessageEvent('message', {
+            data: message,
+            origin: window.location.origin
+          });
+          window.dispatchEvent(event);
+        } catch(e) {
+          console.error('[Lumenless] Error dispatching message event:', e);
+        }
+      };
+      
+      // Notify the page that we're in mobile mode
+      window.__LUMENLESS_MOBILE__ = true;
+      
       console.log('[Lumenless] Mobile WebView mode enabled');
       
       true; // Required for Android
