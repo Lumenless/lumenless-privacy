@@ -52,4 +52,5 @@ export const analyticsEvents = {
   claimPublicly: 'claim_publicly',
   createInvoice: 'create_invoice',
   onboardingComplete: 'onboarding_complete',
+  pushTokenRegistered: 'push_token_registered',
 } as const;

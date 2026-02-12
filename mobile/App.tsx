@@ -1,21 +1,58 @@
 import 'react-native-gesture-handler'; // Must be imported early for React Navigation
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import { initFirebase } from './src/services/firebase';
 import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted } from './src/services/onboarding';
+import {
+  setNotificationHandler,
+  registerForPushNotificationsAsync,
+  addNotificationReceivedListener,
+  addNotificationResponseListener,
+} from './src/services/pushNotifications';
 
 initFirebase();
+setNotificationHandler();
 
 export default function App() {
   const [hasMinted, setHasMinted] = useState<boolean | null>(null);
+  const pushListenersRef = useRef<boolean>(false);
 
   useEffect(() => {
     hasMintedLumenId().then(setHasMinted);
   }, []);
+
+  // Register for push notifications and set up listeners once user is past onboarding
+  useEffect(() => {
+    if (hasMinted !== true || pushListenersRef.current) return;
+    pushListenersRef.current = true;
+
+    registerForPushNotificationsAsync().then((token) => {
+      if (token && __DEV__) {
+        console.log('[App] Push token ready, send to backend if needed:', token);
+      }
+    });
+
+    const received = addNotificationReceivedListener((notification) => {
+      if (__DEV__) {
+        console.log('[App] Notification received:', notification.request.content);
+      }
+    });
+    const response = addNotificationResponseListener((response) => {
+      if (__DEV__) {
+        console.log('[App] Notification tapped:', response.notification.request.content.data);
+      }
+      // Optional: use response.notification.request.content.data?.url for deep linking
+    });
+
+    return () => {
+      received.remove();
+      response.remove();
+    };
+  }, [hasMinted]);
 
   const handleMintSuccess = () => {
     setOnboardingCompleted().then(() => {});
