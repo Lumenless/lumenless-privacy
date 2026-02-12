@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
 
     // Load SDK
     const sdk = await import('privacycash/utils');
-    const { EncryptionService, withdraw, withdrawSPL, getUtxos, getBalanceFromUtxos } = sdk;
+    const { EncryptionService, withdraw, withdrawSPL } = sdk;
     const hasherModule = await import('@lightprotocol/hasher.rs');
     const { WasmFactory } = hasherModule;
 
@@ -242,7 +242,12 @@ export async function POST(request: NextRequest) {
 
     // Derive encryption keys from user's signature
     const encryptionService = new EncryptionService();
-    encryptionService.deriveEncryptionKeyFromSignature(sigBytes);
+    const keys = encryptionService.deriveEncryptionKeyFromSignature(sigBytes);
+    
+    // Log derived key fingerprints for debugging (first 8 bytes only for security)
+    const keyV1Fingerprint = keys.v1 ? Buffer.from(keys.v1).slice(0, 8).toString('hex') : 'null';
+    const keyV2Fingerprint = keys.v2 ? Buffer.from(keys.v2).slice(0, 8).toString('hex') : 'null';
+    console.log('[Withdraw API] Derived key fingerprints - V1:', keyV1Fingerprint, 'V2:', keyV2Fingerprint);
 
     const connection = new Connection(endpoint, 'confirmed');
     const publicKey = new PublicKey(address);
@@ -250,25 +255,6 @@ export async function POST(request: NextRequest) {
     const storage = makeMemoryStorage();
 
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
-    
-    // First, fetch UTXOs to verify we have a balance
-    console.log('[Withdraw API] Fetching UTXOs to verify balance...');
-    const utxos = await getUtxos({ publicKey, connection, encryptionService, storage });
-    const balance = getBalanceFromUtxos(utxos);
-    console.log('[Withdraw API] Found', utxos.length, 'UTXOs, balance:', balance.lamports?.toString(), 'lamports');
-    
-    if (utxos.length === 0) {
-      return NextResponse.json({ 
-        error: 'No UTXOs found. You may not have any deposits, or the deposit may still be processing.' 
-      }, { status: 400 });
-    }
-    
-    // Log UTXO details for debugging
-    for (let i = 0; i < utxos.length; i++) {
-      const utxo = utxos[i];
-      console.log(`[Withdraw API] UTXO ${i}: index=${utxo.index}, amount=${utxo.amount?.toString()}`);
-    }
-    
     console.log('[Withdraw API] Executing withdraw...');
 
     if (isSplWithdraw) {
@@ -324,18 +310,28 @@ export async function POST(request: NextRequest) {
 
   } catch (err) {
     console.error('[Withdraw API] Error:', err);
+    
+    // Log full error stack for debugging
+    if (err instanceof Error && err.stack) {
+      console.error('[Withdraw API] Stack trace:', err.stack);
+    }
+    
     let message = err instanceof Error ? err.message : 'Failed to process withdraw request';
     
     // Provide more helpful error messages for common ZK proof errors
-    if (message.includes('ForceEqualIfEnabled')) {
-      message = 'ZK proof verification failed. This usually means the commitment data does not match. ' +
-        'Please ensure you are withdrawing from the same wallet that made the deposit. ' +
-        'If you deposited from a web browser and are withdrawing from mobile (or vice versa), ' +
-        'try using the same platform for both operations.';
+    if (message.includes('ForceEqualIfEnabled') || message.includes('Assert Failed') || message.includes('assert failed')) {
+      console.error('[Withdraw API] ZK proof failed - this indicates a commitment mismatch');
+      message = 'ZK proof verification failed (commitment mismatch). This can happen if: ' +
+        '(1) The deposit was made from a different wallet, ' +
+        '(2) The deposit is still being processed, or ' +
+        '(3) There is a temporary issue with the Privacy Cash network. ' +
+        'Please try again in a few minutes.';
     } else if (message.includes('no balance')) {
       message = 'No private balance found. Please deposit funds first.';
     } else if (message.includes('Need at least 1 unspent UTXO')) {
       message = 'No UTXOs available. Your previous deposit may still be processing, or all funds have been withdrawn.';
+    } else if (message.includes('Failed to fetch Merkle proof')) {
+      message = 'Could not fetch the Merkle proof for your UTXO. The Privacy Cash indexer may be temporarily unavailable.';
     }
     
     return NextResponse.json({ error: message }, { status: 500 });

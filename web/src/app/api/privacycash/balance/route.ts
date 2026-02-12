@@ -116,7 +116,12 @@ export async function POST(request: NextRequest) {
       wasmModule.create();
 
       const encryptionService = new EncryptionService();
-      encryptionService.deriveEncryptionKeyFromSignature(sigBytes);
+      const keys = encryptionService.deriveEncryptionKeyFromSignature(sigBytes);
+      
+      // Log derived key fingerprints for debugging (first 8 bytes only for security)
+      const keyV1Fingerprint = keys.v1 ? Buffer.from(keys.v1).slice(0, 8).toString('hex') : 'null';
+      const keyV2Fingerprint = keys.v2 ? Buffer.from(keys.v2).slice(0, 8).toString('hex') : 'null';
+      console.log('[Balance API] Derived key fingerprints - V1:', keyV1Fingerprint, 'V2:', keyV2Fingerprint);
 
       const connection = new Connection(endpoint, 'confirmed');
       const publicKey = new PublicKey(address);
