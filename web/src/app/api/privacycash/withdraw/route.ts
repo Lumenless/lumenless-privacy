@@ -226,7 +226,12 @@ export async function POST(request: NextRequest) {
     // Load SDK
     console.log('[Withdraw API] Loading SDK...');
     const sdk = await import('privacycash/utils');
-    const { EncryptionService, withdraw, withdrawSPL } = sdk;
+    const { EncryptionService, withdraw, withdrawSPL, setLogger } = sdk;
+    
+    // Enable SDK debug logging
+    setLogger((level: string, message: string) => {
+      console.log(`[PrivacyCash SDK ${level}] ${message}`);
+    });
     console.log(`[Withdraw API] SDK loaded (${Date.now() - reqStartTime}ms)`);
 
     const hasherModule = await import('@lightprotocol/hasher.rs');
@@ -276,6 +281,29 @@ export async function POST(request: NextRequest) {
 
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
     console.log(`[Withdraw API] Circuit files ready (${Date.now() - reqStartTime}ms)`);
+
+    // Pre-fetch UTXOs to log details for debugging
+    const { getUtxos, getBalanceFromUtxos } = sdk;
+    const utxos = await getUtxos({ publicKey, connection, encryptionService, storage });
+    const balance = getBalanceFromUtxos(utxos);
+    console.log(`[Withdraw API] Found ${utxos.length} UTXOs, balance: ${balance.lamports} lamports`);
+    
+    // Log UTXO details for debugging
+    for (let i = 0; i < utxos.length; i++) {
+      const utxo = utxos[i];
+      const commitment = await utxo.getCommitment();
+      const nullifier = await utxo.getNullifier();
+      // Log keypair pubkey (first 20 chars) for debugging
+      const pubkeyStr = utxo.keypair?.pubkey?.toString() || 'unknown';
+      console.log(`[Withdraw API] UTXO ${i}: index=${utxo.index}, amount=${utxo.amount?.toString()}, version=${utxo.version}, pubkey=${pubkeyStr.substring(0, 20)}..., commitment=${commitment?.substring(0, 20)}..., nullifier=${nullifier?.substring(0, 20)}...`);
+    }
+
+    if (utxos.length === 0) {
+      return NextResponse.json({
+        error: 'No UTXOs found. You may not have any deposits, or the deposit may still be processing.'
+      }, { status: 400 });
+    }
+
     console.log('[Withdraw API] Executing withdraw - this may take 1-2 minutes...');
 
     // Timeout wrapper to prevent infinite hangs (4 min timeout for ZK proof)
