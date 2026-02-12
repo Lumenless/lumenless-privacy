@@ -166,26 +166,8 @@ export default function WebViewWithdrawScreen() {
             source: 'webview',
           });
           
-          // Show success alert
-          Alert.alert(
-            'Withdrawal Successful',
-            `Transaction: ${data.tx?.slice(0, 20)}...`,
-            [
-              {
-                text: 'View on Explorer',
-                onPress: () => {
-                  // Could open in browser using Linking
-                },
-              },
-              {
-                text: 'Done',
-                onPress: () => {
-                  // Navigate back - the previous screen will refresh on focus
-                  navigation.goBack();
-                },
-              },
-            ]
-          );
+          // Close the WebView immediately after successful withdrawal
+          navigation.goBack();
           break;
           
         case 'withdraw_error':
