@@ -517,7 +517,7 @@ function WithdrawView() {
   const styles = {
     container: {
       minHeight: '100vh',
-      backgroundColor: '#08080c',
+      background: 'linear-gradient(180deg, #1a1025 0%, #08080c 100%)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
