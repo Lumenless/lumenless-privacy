@@ -185,11 +185,12 @@ export default function PayLinksScreen() {
     navigation.navigate('WebViewWithdraw', {
       token: token || 'SOL',
       walletAddress: pcUserAddress || undefined,
-      // Pass balances so user doesn't need to sign again in WebView
+      // Pass balances in BASE UNITS (lamports for SOL, 1e6 for USDC/USDT)
+      // pcBalance stores human-readable values, so we convert back
       balances: pcBalance ? {
-        SOL: pcBalance.sol,
-        USDC: pcBalance.usdc,
-        USDT: pcBalance.usdt,
+        SOL: Math.round(pcBalance.sol * 1e9),   // Convert SOL to lamports
+        USDC: Math.round(pcBalance.usdc * 1e6), // Convert to USDC base units
+        USDT: Math.round(pcBalance.usdt * 1e6), // Convert to USDT base units
       } : undefined,
     });
     // Note: Balance will refresh automatically when screen focuses
