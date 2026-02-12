@@ -1,3 +1,22 @@
+# Firebase & Push Notifications
+
+## Firebase Analytics
+
+The app uses **React Native Firebase** (`@react-native-firebase/app`, `@react-native-firebase/analytics`) for native Analytics. Events (screen views, wallet connect, withdraw, deposit, create invoice, etc.) are logged to Firebase.
+
+- **Android**: Uses `google-services.json` (already configured).
+- **iOS**: Uses `GoogleService-Info.plist`. A placeholder plist is included for prebuild. Before building for iOS, add an iOS app in [Firebase Console](https://console.firebase.google.com) with bundle ID `com.lumenless`, download the real `GoogleService-Info.plist`, and replace the file in the project root.
+
+### DebugView (Android)
+
+To see events in Firebase Console → Analytics → DebugView when running debug builds:
+
+```bash
+adb shell setprop debug.firebase.analytics.app com.lumenless
+```
+
+---
+
 # Push Notifications (Firebase / FCM)
 
 Push is integrated with **Expo Notifications** and uses **Firebase Cloud Messaging (FCM)** on Android.

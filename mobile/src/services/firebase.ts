@@ -1,43 +1,25 @@
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAnalytics, logEvent as firebaseLogEvent, type Analytics } from 'firebase/analytics';
+import analytics from '@react-native-firebase/analytics';
 
-const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-};
-
-let app: FirebaseApp | null = null;
-let analytics: Analytics | null = null;
-
+/**
+ * Initialize Firebase. With React Native Firebase, the app is auto-configured
+ * from google-services.json (Android) / GoogleService-Info.plist (iOS).
+ * This is a no-op for API compatibility.
+ */
 export function initFirebase(): void {
-  if (getApps().length > 0) return;
-  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) return;
-
-  try {
-    app = initializeApp(firebaseConfig);
-    analytics = getAnalytics(app);
-  } catch {
-    // Analytics may be unsupported in some environments (e.g. Expo Go)
-  }
+  // React Native Firebase auto-initializes from native config files.
 }
 
-export function getFirebaseAnalytics(): Analytics | null {
-  return analytics;
+export function getFirebaseAnalytics() {
+  return analytics();
 }
 
 export function logEvent(name: string, params?: Record<string, unknown>): void {
-  if (analytics) {
-    firebaseLogEvent(analytics, name, params);
-  }
+  analytics().logEvent(name, params as Record<string, string | number | boolean>);
 }
 
 /** Log a screen view (Firebase recommended event). */
 export function logScreenView(screenName: string, screenClass?: string): void {
-  logEvent('screen_view', {
+  analytics().logScreenView({
     screen_name: screenName,
     screen_class: screenClass ?? screenName,
   });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile, access, mkdir } from 'fs/promises';
 import path from 'path';
 
 /**
@@ -54,6 +54,59 @@ function makeMemoryStorage(): Storage {
       return Object.keys(data).length;
     },
   };
+}
+
+/**
+ * Ensure circuit files are available on the filesystem.
+ * The privacycash SDK (snarkjs) requires filesystem paths, not URLs.
+ * On Vercel, we copy from public or download to /tmp.
+ */
+async function ensureCircuitFiles(baseUrl: string): Promise<string> {
+  const tmpDir = '/tmp/circuits';
+  const wasmPath = path.join(tmpDir, 'transaction2.wasm');
+  const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
+
+  try {
+    await access(wasmPath);
+    await access(zkeyPath);
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    /* need to populate */
+  }
+
+  await mkdir(tmpDir, { recursive: true });
+
+  const cwd = process.cwd();
+  const publicCircuitsDir = path.join(cwd, 'public', 'circuits');
+  try {
+    const [wasmData, zkeyData] = await Promise.all([
+      readFile(path.join(publicCircuitsDir, 'transaction2.wasm')),
+      readFile(path.join(publicCircuitsDir, 'transaction2.zkey')),
+    ]);
+    await Promise.all([
+      writeFile(wasmPath, wasmData),
+      writeFile(zkeyPath, zkeyData),
+    ]);
+    return path.join(tmpDir, 'transaction2');
+  } catch {
+    /* public not accessible, try fetch */
+  }
+
+  const wasmUrl = `${baseUrl}/circuits/transaction2.wasm`;
+  const zkeyUrl = `${baseUrl}/circuits/transaction2.zkey`;
+  const [wasmRes, zkeyRes] = await Promise.all([fetch(wasmUrl), fetch(zkeyUrl)]);
+  if (!wasmRes.ok || !zkeyRes.ok) {
+    throw new Error(`Failed to download circuit files: wasm=${wasmRes.status}, zkey=${zkeyRes.status}`);
+  }
+  const [wasmBuffer, zkeyBuffer] = await Promise.all([
+    wasmRes.arrayBuffer(),
+    zkeyRes.arrayBuffer(),
+  ]);
+  await Promise.all([
+    writeFile(wasmPath, Buffer.from(wasmBuffer)),
+    writeFile(zkeyPath, Buffer.from(zkeyBuffer)),
+  ]);
+  return path.join(tmpDir, 'transaction2');
 }
 
 /** Load WASM from public dir (Node-friendly when fetch to same origin fails in serverless). */
@@ -174,6 +227,7 @@ export async function POST(request: NextRequest) {
     const recipientPubkey = new PublicKey(recipient);
     const storage = makeMemoryStorage();
 
+    const circuitBasePath = await ensureCircuitFiles(baseUrl);
     console.log('[Withdraw API] Executing withdraw...');
 
     if (isSplWithdraw) {
@@ -181,7 +235,7 @@ export async function POST(request: NextRequest) {
       const result = await withdrawSPL({
         lightWasm,
         storage,
-        keyBasePath: '/circuits/transaction2',
+        keyBasePath: circuitBasePath,
         publicKey,
         connection,
         base_units: amountBaseUnits!,
@@ -206,7 +260,7 @@ export async function POST(request: NextRequest) {
       const result = await withdraw({
         lightWasm,
         storage,
-        keyBasePath: '/circuits/transaction2',
+        keyBasePath: circuitBasePath,
         publicKey,
         connection,
         amount_in_lamports: amountLamports!,

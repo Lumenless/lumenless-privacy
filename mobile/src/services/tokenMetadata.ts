@@ -1,9 +1,12 @@
 // Token metadata fetching service
-// Uses Metaplex SDK to fetch metadata from on-chain Metaplex Token Metadata program
+// Uses Metaplex Token Metadata program to fetch metadata directly (no heavy SDK)
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Metaplex } from '@metaplex-foundation/js';
+import { Metadata } from '@metaplex-foundation/mpl-token-metadata';
 import { SOLANA_RPC_URL } from '../constants/solana';
+
+// Token Metadata Program ID
+const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
 // Cache for token metadata
 const tokenMetadataCache: Map<string, { symbol?: string; name?: string; logoURI?: string }> = new Map();
@@ -27,15 +30,27 @@ const WELL_KNOWN_TOKENS: Record<string, { symbol: string; name: string; logoURI?
   },
 };
 
-// Create a shared Metaplex instance
-let metaplexInstance: Metaplex | null = null;
+// Create a shared Connection instance
+let connectionInstance: Connection | null = null;
 
-function getMetaplexInstance(): Metaplex {
-  if (!metaplexInstance) {
-    const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-    metaplexInstance = Metaplex.make(connection);
+function getConnection(): Connection {
+  if (!connectionInstance) {
+    connectionInstance = new Connection(SOLANA_RPC_URL, 'confirmed');
   }
-  return metaplexInstance;
+  return connectionInstance;
+}
+
+// Derive metadata PDA for a mint
+function getMetadataPDA(mint: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('metadata'),
+      TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+      mint.toBuffer(),
+    ],
+    TOKEN_METADATA_PROGRAM_ID
+  );
+  return pda;
 }
 
 // List of IPFS gateways to try as fallbacks
@@ -172,57 +187,56 @@ async function fetchLogoFromURI(uri: string): Promise<string | undefined> {
   return undefined;
 }
 
-// Get token metadata for a mint address from on-chain using Metaplex SDK
+// Get token metadata for a mint address from on-chain using direct RPC
 async function getTokenMetadataOnChain(mint: string): Promise<{ symbol?: string; name?: string; logoURI?: string } | null> {
   try {
-    const metaplex = getMetaplexInstance();
+    const connection = getConnection();
     const mintPubkey = new PublicKey(mint);
+    const metadataPDA = getMetadataPDA(mintPubkey);
     
-    // Use Metaplex SDK to find metadata account
-    // This works for both NFTs and fungible tokens with metadata
-    try {
-      const metadataAccount = await metaplex.nfts().findByMint({ mintAddress: mintPubkey });
-      
-      if (!metadataAccount) {
-        console.log(`[TokenMetadata] No metadata account found for mint ${mint}`);
-        return null;
-      }
-      
-      console.log(`[TokenMetadata] Found metadata for ${mint}: name="${metadataAccount.name}", symbol="${metadataAccount.symbol}", uri="${metadataAccount.uri}"`);
-      
-      // Fetch logo from URI
-      let logoURI = undefined;
-      if (metadataAccount.uri) {
-        console.log(`[TokenMetadata] Fetching logo for ${mint} from URI: ${metadataAccount.uri}`);
-        logoURI = await fetchLogoFromURI(metadataAccount.uri);
-        if (logoURI) {
-          console.log(`[TokenMetadata] Successfully fetched logo for ${mint}: ${logoURI}`);
-        } else {
-          console.warn(`[TokenMetadata] Failed to fetch logo for ${mint} from URI: ${metadataAccount.uri}`);
-        }
-      } else {
-        console.log(`[TokenMetadata] No URI found for ${mint}, cannot fetch logo`);
-      }
-      
-      return {
-        symbol: metadataAccount.symbol || undefined,
-        name: metadataAccount.name || undefined,
-        logoURI,
-      };
-    } catch (findError: any) {
-      // If findByMint fails, try using the metadata PDA directly
-      if (findError?.message?.includes('AccountNotFound') || findError?.message?.includes('not found')) {
-        console.log(`[TokenMetadata] No metadata account found for mint ${mint}`);
-        return null;
-      }
-      throw findError;
-    }
-  } catch (error: any) {
-    // Metaplex SDK throws if metadata doesn't exist, which is expected for some tokens
-    if (error?.message?.includes('AccountNotFound') || error?.message?.includes('not found')) {
+    // Fetch the metadata account
+    const accountInfo = await connection.getAccountInfo(metadataPDA);
+    
+    if (!accountInfo) {
       console.log(`[TokenMetadata] No metadata account found for mint ${mint}`);
       return null;
     }
+    
+    // Deserialize the metadata using mpl-token-metadata
+    const metadata = Metadata.deserialize(accountInfo.data)[0];
+    
+    if (!metadata) {
+      console.log(`[TokenMetadata] Failed to deserialize metadata for mint ${mint}`);
+      return null;
+    }
+    
+    // Clean up name and symbol (remove null bytes)
+    const name = metadata.data.name.replace(/\0/g, '').trim();
+    const symbol = metadata.data.symbol.replace(/\0/g, '').trim();
+    const uri = metadata.data.uri.replace(/\0/g, '').trim();
+    
+    console.log(`[TokenMetadata] Found metadata for ${mint}: name="${name}", symbol="${symbol}", uri="${uri}"`);
+    
+    // Fetch logo from URI
+    let logoURI = undefined;
+    if (uri) {
+      console.log(`[TokenMetadata] Fetching logo for ${mint} from URI: ${uri}`);
+      logoURI = await fetchLogoFromURI(uri);
+      if (logoURI) {
+        console.log(`[TokenMetadata] Successfully fetched logo for ${mint}: ${logoURI}`);
+      } else {
+        console.warn(`[TokenMetadata] Failed to fetch logo for ${mint} from URI: ${uri}`);
+      }
+    } else {
+      console.log(`[TokenMetadata] No URI found for ${mint}, cannot fetch logo`);
+    }
+    
+    return {
+      symbol: symbol || undefined,
+      name: name || undefined,
+      logoURI,
+    };
+  } catch (error: any) {
     console.error(`[TokenMetadata] Error fetching on-chain metadata for ${mint}:`, error?.message || error);
     return null;
   }
