@@ -18,7 +18,7 @@ import { PayLinkModal, CreatePayLinkModal } from '../components';
 import { createPayLink, getPayLinks, getPayLinkUrl, getHiddenPayLinksCount, PayLink } from '../services/paylink';
 import { usePayLinkBalances } from '../hooks/usePayLinkBalances';
 import * as Clipboard from 'expo-clipboard';
-import * as KeepAwake from 'expo-keep-awake';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { colors, spacing, radius, typography } from '../theme';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
@@ -124,8 +124,8 @@ export default function PayLinksScreen() {
     setPcError(null);
     connectDoneRef.current = false;
     
-    // Keep screen awake during balance fetch (can take 30-60s)
-    await KeepAwake.activateKeepAwakeAsync('privacycash-balance');
+    // Keep screen awake during balance fetch (fire-and-forget, don't block)
+    activateKeepAwakeAsync('privacycash-balance').catch(() => {});
     
     const SAFETY_TIMEOUT_MS = 90000; // Extended to 90s since balance fetch can be slow
     const safetyTimer = setTimeout(() => {
@@ -133,7 +133,7 @@ export default function PayLinksScreen() {
         console.log('[PayLinksScreen] Connect wallet: safety timeout fired');
         setPcError('Request timed out. Try again.');
         setPcLoading(false);
-        KeepAwake.deactivateKeepAwake('privacycash-balance');
+        deactivateKeepAwake('privacycash-balance');
       }
     }, SAFETY_TIMEOUT_MS);
     try {
@@ -170,7 +170,7 @@ export default function PayLinksScreen() {
       connectDoneRef.current = true;
       clearTimeout(safetyTimer);
       setPcLoading(false);
-      KeepAwake.deactivateKeepAwake('privacycash-balance');
+      deactivateKeepAwake('privacycash-balance');
       console.log('[PayLinksScreen] Connect wallet: done (finally)');
     }
   }, []);
