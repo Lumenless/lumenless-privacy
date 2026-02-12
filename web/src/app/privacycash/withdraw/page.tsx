@@ -59,6 +59,51 @@ function postToMobile(type: string, data: Record<string, unknown>) {
   }
 }
 
+// Pending signature requests from mobile
+const pendingSignatureRequests = new Map<string, { resolve: (sig: Uint8Array) => void; reject: (err: Error) => void }>();
+
+/** Request signature from mobile app via postMessage */
+function requestMobileSignature(message: Uint8Array): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const requestId = Math.random().toString(36).substring(7);
+    
+    // Store the promise handlers
+    pendingSignatureRequests.set(requestId, { resolve, reject });
+    
+    // Encode message as base64
+    const messageBase64 = btoa(String.fromCharCode(...message));
+    
+    // Request signature from native app
+    postToMobile('sign_message', { message: messageBase64, requestId });
+    
+    // Timeout after 60 seconds
+    setTimeout(() => {
+      if (pendingSignatureRequests.has(requestId)) {
+        pendingSignatureRequests.delete(requestId);
+        reject(new Error('Signature request timed out'));
+      }
+    }, 60000);
+  });
+}
+
+/** Handle signature response from mobile app */
+function handleMobileSignatureResponse(data: { requestId: string; signature?: string; error?: string }) {
+  const pending = pendingSignatureRequests.get(data.requestId);
+  if (!pending) return;
+  
+  pendingSignatureRequests.delete(data.requestId);
+  
+  if (data.error) {
+    pending.reject(new Error(data.error));
+  } else if (data.signature) {
+    // Decode base64 signature
+    const signatureBytes = Uint8Array.from(atob(data.signature), c => c.charCodeAt(0));
+    pending.resolve(signatureBytes);
+  } else {
+    pending.reject(new Error('Invalid signature response'));
+  }
+}
+
 /** Loading fallback for Suspense boundary */
 function LoadingFallback() {
   return (
@@ -96,10 +141,9 @@ export default function WithdrawPage() {
 
 function WithdrawView() {
   const searchParams = useSearchParams();
-  const { connected } = useConnector();
+  const { connected: browserConnected } = useConnector();
   const { account } = useAccount();
-  const { signer } = useTransactionSigner();
-  const ownerAddress = useMemo(() => account?.address || null, [account]);
+  const { signer: browserSigner } = useTransactionSigner();
   
   // Check if we're in mobile WebView mode
   const isMobileWebView = useMemo(() => {
@@ -108,10 +152,46 @@ function WithdrawView() {
            searchParams.get('mobile') === 'true';
   }, [searchParams]);
   
+  // Get wallet address from URL params (for mobile) or from browser wallet
+  const mobileWalletAddress = searchParams.get('walletAddress');
+  const ownerAddress = useMemo(() => {
+    if (isMobileWebView && mobileWalletAddress) {
+      return mobileWalletAddress;
+    }
+    return account?.address || null;
+  }, [isMobileWebView, mobileWalletAddress, account]);
+  
+  // Consider connected if we have a mobile wallet address OR browser is connected
+  const connected = useMemo(() => {
+    if (isMobileWebView && mobileWalletAddress) {
+      return true;
+    }
+    return browserConnected;
+  }, [isMobileWebView, mobileWalletAddress, browserConnected]);
+  
   // Pre-fill from URL params (for mobile deep linking)
   const initialRecipient = searchParams.get('recipient') || '';
   const initialToken = (searchParams.get('token') as TokenType) || 'SOL';
   const initialAmount = searchParams.get('amount') || '';
+  
+  // Listen for signature responses from mobile
+  useEffect(() => {
+    if (!isMobileWebView) return;
+    
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (data.type === 'sign_message_response' || data.type === 'sign_message_error') {
+          handleMobileSignatureResponse(data);
+        }
+      } catch {
+        // Ignore non-JSON messages
+      }
+    };
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [isMobileWebView]);
   
   const [balances, setBalances] = useState<Balances | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -140,7 +220,9 @@ function WithdrawView() {
 
   // Fetch balances for all tokens
   const fetchBalances = useCallback(async () => {
-    if (!signer?.signMessage || !ownerAddress) return;
+    if (!ownerAddress) return;
+    // For browser, need signer. For mobile, we'll use postMessage
+    if (!isMobileWebView && !browserSigner?.signMessage) return;
     
     try {
       setIsLoading(true);
@@ -149,8 +231,16 @@ function WithdrawView() {
       
       // Sign message to derive encryption keys
       const messageBytes = new TextEncoder().encode(DERIVATION_MESSAGE);
-      const signature = await signer.signMessage(messageBytes);
-      const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      let sigBytes: Uint8Array;
+      
+      if (isMobileWebView) {
+        // Request signature from mobile app
+        sigBytes = await requestMobileSignature(messageBytes);
+      } else {
+        // Use browser wallet
+        const signature = await browserSigner!.signMessage(messageBytes);
+        sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      }
       
       setProgressMessage('Loading SDK...');
       
@@ -225,7 +315,7 @@ function WithdrawView() {
     } finally {
       setIsLoading(false);
     }
-  }, [signer, ownerAddress, endpoint, isMobileWebView]);
+  }, [browserSigner, ownerAddress, endpoint, isMobileWebView]);
 
   // Get current token balance
   const currentBalance = balances ? balances[selectedToken] : null;
@@ -236,8 +326,13 @@ function WithdrawView() {
 
   // Handle withdraw
   const handleWithdraw = useCallback(async () => {
-    if (!signer?.signMessage || !ownerAddress || !withdrawAddress || !withdrawAmount) {
+    if (!ownerAddress || !withdrawAddress || !withdrawAmount) {
       setWithdrawResult({ success: false, message: 'Please fill in all fields' });
+      return;
+    }
+    // For browser, need signer. For mobile, we'll use postMessage
+    if (!isMobileWebView && !browserSigner?.signMessage) {
+      setWithdrawResult({ success: false, message: 'Wallet not connected' });
       return;
     }
     
@@ -260,8 +355,16 @@ function WithdrawView() {
       
       // Sign message to derive encryption keys
       const messageBytes = new TextEncoder().encode(DERIVATION_MESSAGE);
-      const signature = await signer.signMessage(messageBytes);
-      const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      let sigBytes: Uint8Array;
+      
+      if (isMobileWebView) {
+        // Request signature from mobile app
+        sigBytes = await requestMobileSignature(messageBytes);
+      } else {
+        // Use browser wallet
+        const signature = await browserSigner!.signMessage(messageBytes);
+        sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
+      }
       
       setProgressMessage('Loading SDK...');
       
@@ -368,7 +471,7 @@ function WithdrawView() {
     } finally {
       setIsWithdrawing(false);
     }
-  }, [signer, ownerAddress, withdrawAddress, withdrawAmount, currentBalance, endpoint, fetchBalances, isMobileWebView, selectedToken, tokenConfig]);
+  }, [browserSigner, ownerAddress, withdrawAddress, withdrawAmount, currentBalance, endpoint, fetchBalances, isMobileWebView, selectedToken, tokenConfig]);
 
   // Handle close button (for mobile WebView)
   const handleClose = useCallback(() => {

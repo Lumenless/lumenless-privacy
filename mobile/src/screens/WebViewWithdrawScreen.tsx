@@ -12,6 +12,7 @@ import {
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { transact } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { colors, spacing, typography } from '../theme';
 import { logEvent, analyticsEvents } from '../services/firebase';
 
@@ -24,6 +25,7 @@ export type WebViewWithdrawParams = {
   token?: 'SOL' | 'USDC' | 'USDT';
   recipient?: string;
   amount?: string;
+  walletAddress?: string;
   // Note: callbacks can't be passed via navigation params
   // Success is communicated back via navigation focus event
 };
@@ -39,6 +41,8 @@ interface WebViewMessage {
   token?: string;
   amount?: string;
   recipient?: string;
+  message?: string; // For sign_message requests (base64 encoded)
+  requestId?: string; // For matching signature responses
 }
 
 export default function WebViewWithdrawScreen() {
@@ -56,14 +60,74 @@ export default function WebViewWithdrawScreen() {
   if (params.token) urlParams.set('token', params.token);
   if (params.recipient) urlParams.set('recipient', params.recipient);
   if (params.amount) urlParams.set('amount', params.amount);
+  if (params.walletAddress) urlParams.set('walletAddress', params.walletAddress);
   
   const webUrl = `${WITHDRAW_WEB_URL}?${urlParams.toString()}`;
+  
+  // Sign a message using MWA and send the signature back to WebView
+  const handleSignMessage = useCallback(async (messageBase64: string, requestId: string) => {
+    try {
+      console.log('[WebViewWithdraw] Sign message requested, requestId:', requestId);
+      
+      await transact(async (wallet) => {
+        // Authorize first
+        const authResult = await wallet.authorize({
+          identity: {
+            name: 'Lumenless',
+            uri: 'https://lumenless.com',
+            icon: 'https://lumenless.com/logo.svg',
+          },
+          cluster: 'mainnet-beta',
+        });
+        
+        // Decode the base64 message
+        const messageBytes = Uint8Array.from(atob(messageBase64), c => c.charCodeAt(0));
+        
+        // Sign the message
+        const signResult = await wallet.signMessages({
+          addresses: [authResult.accounts[0].address],
+          payloads: [messageBytes],
+        });
+        
+        // Encode signature as base64
+        const signatureBytes = signResult[0];
+        const signatureBase64 = btoa(String.fromCharCode(...signatureBytes));
+        
+        // Send signature back to WebView
+        const responseScript = `
+          window.postMessage(JSON.stringify({
+            type: 'sign_message_response',
+            requestId: '${requestId}',
+            signature: '${signatureBase64}',
+            address: '${authResult.accounts[0].address}'
+          }), '*');
+          true;
+        `;
+        webViewRef.current?.injectJavaScript(responseScript);
+        
+        console.log('[WebViewWithdraw] Signature sent back to WebView');
+      });
+    } catch (err) {
+      console.error('[WebViewWithdraw] Sign message error:', err);
+      // Send error back to WebView
+      const errorMessage = err instanceof Error ? err.message : 'Signing failed';
+      const errorScript = `
+        window.postMessage(JSON.stringify({
+          type: 'sign_message_error',
+          requestId: '${requestId}',
+          error: '${errorMessage.replace(/'/g, "\\'")}'
+        }), '*');
+        true;
+      `;
+      webViewRef.current?.injectJavaScript(errorScript);
+    }
+  }, []);
   
   // Handle messages from the WebView
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as WebViewMessage;
-      console.log('[WebViewWithdraw] Message from web:', data.type, data);
+      console.log('[WebViewWithdraw] Message from web:', data.type);
       
       switch (data.type) {
         case 'connected':
@@ -72,6 +136,15 @@ export default function WebViewWithdrawScreen() {
           
         case 'balances':
           console.log('[WebViewWithdraw] Balances received:', data.balances);
+          break;
+        
+        case 'sign_message':
+          // WebView is requesting a signature via MWA
+          if (data.message && data.requestId) {
+            handleSignMessage(data.message, data.requestId);
+          } else {
+            console.error('[WebViewWithdraw] Invalid sign_message request');
+          }
           break;
           
         case 'withdraw_success':
@@ -120,7 +193,7 @@ export default function WebViewWithdrawScreen() {
     } catch (err) {
       console.error('[WebViewWithdraw] Error parsing message:', err);
     }
-  }, [navigation, params]);
+  }, [navigation, handleSignMessage]);
   
   // Handle WebView errors
   const handleError = useCallback((syntheticEvent: { nativeEvent: { description: string } }) => {
