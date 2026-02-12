@@ -60,15 +60,29 @@ function makeMemoryStorage(): Storage {
  * Ensure circuit files are available on the filesystem.
  * The privacycash SDK (snarkjs) requires filesystem paths, not URLs.
  * On Vercel, we copy from public or download to /tmp.
- * 
- * NOTE: Always re-copy from source to avoid stale files in /tmp.
  */
 async function ensureCircuitFiles(baseUrl: string): Promise<string> {
+  const startTime = Date.now();
   const tmpDir = '/tmp/circuits';
   const wasmPath = path.join(tmpDir, 'transaction2.wasm');
   const zkeyPath = path.join(tmpDir, 'transaction2.zkey');
 
   await mkdir(tmpDir, { recursive: true });
+
+  // Check if files already exist and have reasonable size (avoid re-copying)
+  try {
+    const [wasmStat, zkeyStat] = await Promise.all([
+      access(wasmPath).then(() => readFile(wasmPath, { flag: 'r' })).then(b => b.length),
+      access(zkeyPath).then(() => readFile(zkeyPath, { flag: 'r' })).then(b => b.length),
+    ]);
+    // Circuit files should be >1MB each
+    if (wasmStat > 1_000_000 && zkeyStat > 1_000_000) {
+      console.log(`[Withdraw API] Circuit files already exist (${Date.now() - startTime}ms)`);
+      return path.join(tmpDir, 'transaction2');
+    }
+  } catch {
+    // Files don't exist yet
+  }
 
   // First try to copy from node_modules (SDK includes circuit files)
   const cwd = process.cwd();
@@ -82,7 +96,7 @@ async function ensureCircuitFiles(baseUrl: string): Promise<string> {
       writeFile(wasmPath, wasmData),
       writeFile(zkeyPath, zkeyData),
     ]);
-    console.log('[Withdraw API] Circuit files copied from SDK package');
+    console.log(`[Withdraw API] Circuit files copied from SDK (${Date.now() - startTime}ms)`);
     return path.join(tmpDir, 'transaction2');
   } catch {
     /* SDK circuits not accessible, try public */
@@ -205,14 +219,19 @@ export async function POST(request: NextRequest) {
     const baseUrl = getBaseUrl(request);
     const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
+    const reqStartTime = Date.now();
     console.log('[Withdraw API] Starting withdraw for', address, '→', recipient, 
       isSplWithdraw ? `SPL ${mint} ${amountBaseUnits}` : `SOL ${amountLamports}`);
 
     // Load SDK
+    console.log('[Withdraw API] Loading SDK...');
     const sdk = await import('privacycash/utils');
     const { EncryptionService, withdraw, withdrawSPL } = sdk;
+    console.log(`[Withdraw API] SDK loaded (${Date.now() - reqStartTime}ms)`);
+
     const hasherModule = await import('@lightprotocol/hasher.rs');
     const { WasmFactory } = hasherModule;
+    console.log(`[Withdraw API] Hasher module loaded (${Date.now() - reqStartTime}ms)`);
 
     // Load WASM
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -239,6 +258,7 @@ export async function POST(request: NextRequest) {
       }
     }
     const lightWasm = wasmModule.create();
+    console.log(`[Withdraw API] WASM initialized (${Date.now() - reqStartTime}ms)`);
 
     // Derive encryption keys from user's signature
     const encryptionService = new EncryptionService();
@@ -255,23 +275,36 @@ export async function POST(request: NextRequest) {
     const storage = makeMemoryStorage();
 
     const circuitBasePath = await ensureCircuitFiles(baseUrl);
-    console.log('[Withdraw API] Executing withdraw...');
+    console.log(`[Withdraw API] Circuit files ready (${Date.now() - reqStartTime}ms)`);
+    console.log('[Withdraw API] Executing withdraw - this may take 1-2 minutes...');
+
+    // Timeout wrapper to prevent infinite hangs (4 min timeout for ZK proof)
+    const withTimeout = <T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
+      return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms))
+      ]);
+    };
 
     if (isSplWithdraw) {
       // SPL token withdraw (USDC or USDT)
-      const result = await withdrawSPL({
-        lightWasm,
-        storage,
-        keyBasePath: circuitBasePath,
-        publicKey,
-        connection,
-        base_units: amountBaseUnits!,
-        encryptionService,
-        recipient: recipientPubkey,
-        mintAddress: mint!,
-      });
+      const result = await withTimeout(
+        withdrawSPL({
+          lightWasm,
+          storage,
+          keyBasePath: circuitBasePath,
+          publicKey,
+          connection,
+          base_units: amountBaseUnits!,
+          encryptionService,
+          recipient: recipientPubkey,
+          mintAddress: mint!,
+        }),
+        240_000,
+        'Withdraw timed out after 4 minutes. The ZK proof generation may be stuck. Please try again.'
+      );
 
-      console.log('[Withdraw API] SPL Withdraw successful:', result.tx);
+      console.log(`[Withdraw API] SPL Withdraw successful in ${Date.now() - reqStartTime}ms:`, result.tx);
 
       return NextResponse.json({
         tx: result.tx,
@@ -284,19 +317,23 @@ export async function POST(request: NextRequest) {
 
     } else {
       // SOL withdraw
-      const result = await withdraw({
-        lightWasm,
-        storage,
-        keyBasePath: circuitBasePath,
-        publicKey,
-        connection,
-        amount_in_lamports: amountLamports!,
-        encryptionService,
-        recipient: recipientPubkey,
-        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
-      });
+      const result = await withTimeout(
+        withdraw({
+          lightWasm,
+          storage,
+          keyBasePath: circuitBasePath,
+          publicKey,
+          connection,
+          amount_in_lamports: amountLamports!,
+          encryptionService,
+          recipient: recipientPubkey,
+          referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
+        }),
+        240_000,
+        'Withdraw timed out after 4 minutes. The ZK proof generation may be stuck. Please try again.'
+      );
 
-      console.log('[Withdraw API] SOL Withdraw successful:', result.tx);
+      console.log(`[Withdraw API] SOL Withdraw successful in ${Date.now() - reqStartTime}ms:`, result.tx);
 
       return NextResponse.json({
         tx: result.tx,
@@ -318,8 +355,10 @@ export async function POST(request: NextRequest) {
     
     let message = err instanceof Error ? err.message : 'Failed to process withdraw request';
     
-    // Provide more helpful error messages for common ZK proof errors
-    if (message.includes('ForceEqualIfEnabled') || message.includes('Assert Failed') || message.includes('assert failed')) {
+    // Provide more helpful error messages for common errors
+    if (message.includes('timed out')) {
+      // Keep our custom timeout message as-is
+    } else if (message.includes('ForceEqualIfEnabled') || message.includes('Assert Failed') || message.includes('assert failed')) {
       console.error('[Withdraw API] ZK proof failed - this indicates a commitment mismatch');
       message = 'ZK proof verification failed (commitment mismatch). This can happen if: ' +
         '(1) The deposit was made from a different wallet, ' +
