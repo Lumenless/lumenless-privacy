@@ -485,8 +485,10 @@ function WithdrawView() {
       // Clear form
       setWithdrawAmount('');
       
-      // Refresh balances
-      await fetchBalances();
+      // Refresh balances (skip in mobile mode - balance will refresh when user returns to main screen)
+      if (!isMobileWebView) {
+        await fetchBalances();
+      }
       
     } catch (err) {
       console.error('Withdraw error:', err);
