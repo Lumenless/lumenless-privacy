@@ -185,9 +185,15 @@ export default function PayLinksScreen() {
     navigation.navigate('WebViewWithdraw', {
       token: token || 'SOL',
       walletAddress: pcUserAddress || undefined,
+      // Pass balances so user doesn't need to sign again in WebView
+      balances: pcBalance ? {
+        SOL: pcBalance.sol,
+        USDC: pcBalance.usdc,
+        USDT: pcBalance.usdt,
+      } : undefined,
     });
     // Note: Balance will refresh automatically when screen focuses
-  }, [navigation, pcUserAddress]);
+  }, [navigation, pcUserAddress, pcBalance]);
 
   const handleWithdraw = useCallback(async () => {
     const address = withdrawAddress.trim();

@@ -27,6 +27,12 @@ export type WebViewWithdrawParams = {
   recipient?: string;
   amount?: string;
   walletAddress?: string;
+  // Pre-loaded balances from mobile app (in base units)
+  balances?: {
+    SOL: number;
+    USDC: number;
+    USDT: number;
+  };
   // Note: callbacks can't be passed via navigation params
   // Success is communicated back via navigation focus event
 };
@@ -62,6 +68,10 @@ export default function WebViewWithdrawScreen() {
   if (params.recipient) urlParams.set('recipient', params.recipient);
   if (params.amount) urlParams.set('amount', params.amount);
   if (params.walletAddress) urlParams.set('walletAddress', params.walletAddress);
+  // Pass balances as JSON-encoded string
+  if (params.balances) {
+    urlParams.set('balances', JSON.stringify(params.balances));
+  }
   
   const webUrl = `${WITHDRAW_WEB_URL}?${urlParams.toString()}`;
   

@@ -180,6 +180,22 @@ function WithdrawView() {
   const initialToken = (searchParams.get('token') as TokenType) || 'SOL';
   const initialAmount = searchParams.get('amount') || '';
   
+  // Parse pre-loaded balances from URL (passed from mobile app)
+  const preloadedBalances = useMemo((): Balances | null => {
+    const balancesParam = searchParams.get('balances');
+    if (!balancesParam) return null;
+    try {
+      const parsed = JSON.parse(balancesParam);
+      // Validate it has the expected structure
+      if (typeof parsed.SOL === 'number' && typeof parsed.USDC === 'number' && typeof parsed.USDT === 'number') {
+        return parsed as Balances;
+      }
+    } catch {
+      console.error('[Withdraw] Failed to parse balances from URL');
+    }
+    return null;
+  }, [searchParams]);
+  
   // Listen for signature responses from mobile
   useEffect(() => {
     if (!isMobileWebView) return;
@@ -204,10 +220,12 @@ function WithdrawView() {
     return () => window.removeEventListener('message', handleMessage);
   }, [isMobileWebView]);
   
-  const [balances, setBalances] = useState<Balances | null>(null);
+  // Initialize balances from preloaded data or null
+  const [balances, setBalances] = useState<Balances | null>(preloadedBalances);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasDerivedKeys, setHasDerivedKeys] = useState(false);
+  // If we have preloaded balances, we can skip the "Load Balances" step
+  const [hasDerivedKeys, setHasDerivedKeys] = useState(!!preloadedBalances);
   
   // Withdraw state
   const [selectedToken, setSelectedToken] = useState<TokenType>(initialToken);
@@ -795,13 +813,16 @@ function WithdrawView() {
                 <p style={styles.balanceValue}>
                   {formattedBalance} {selectedToken}
                 </p>
-                <button
-                  onClick={fetchBalances}
-                  disabled={isLoading}
-                  style={{ ...styles.refreshBtn, ...(isLoading ? styles.btnDisabled : {}) }}
-                >
-                  {isLoading ? 'Refreshing...' : 'Refresh'}
-                </button>
+                {/* Only show refresh for browser mode - mobile has preloaded balances */}
+                {!preloadedBalances && (
+                  <button
+                    onClick={fetchBalances}
+                    disabled={isLoading}
+                    style={{ ...styles.refreshBtn, ...(isLoading ? styles.btnDisabled : {}) }}
+                  >
+                    {isLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                )}
               </div>
 
               <p style={styles.desc}>Send to a Solana wallet address</p>
