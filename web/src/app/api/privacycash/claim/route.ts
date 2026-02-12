@@ -280,14 +280,87 @@ export async function POST(request: NextRequest) {
 
     console.log('[Claim API] Step 6: Executing direct deposit with recipient keys...');
 
-    // SPL direct deposit not yet supported - need to add recipientUtxoPubkey to depositSPL
+    // SPL deposit path
     if (isSplDeposit) {
-      void depositSPL;
-      return NextResponse.json({ 
-        error: 'Direct SPL claim not yet supported. Only SOL is supported for now.' 
-      }, { status: 400 });
+      // Check Pay Link SPL token balance
+      const { getAssociatedTokenAddressSync, getAccount } = await import('@solana/spl-token');
+      const payLinkTokenAccount = getAssociatedTokenAddressSync(
+        new PublicKey(mint),
+        payLinkKeypair.publicKey
+      );
+      
+      let tokenBalance: number;
+      try {
+        const tokenAccountInfo = await getAccount(connection, payLinkTokenAccount);
+        tokenBalance = Number(tokenAccountInfo.amount);
+      } catch {
+        return NextResponse.json({ 
+          error: 'Pay Link has no token account for this SPL token' 
+        }, { status: 400 });
+      }
+      
+      console.log('[Claim API] Pay Link SPL balance:', tokenBalance, 'base units');
+      console.log('[Claim API] Requested SPL amount:', amountBaseUnits, 'base units');
+      
+      // Use the smaller of requested amount or available balance
+      const actualDepositAmount = Math.min(amountBaseUnits!, tokenBalance);
+      
+      if (actualDepositAmount <= 0) {
+        return NextResponse.json({ 
+          error: `Insufficient SPL token balance in invoice: ${tokenBalance} base units` 
+        }, { status: 400 });
+      }
+      
+      // If significantly less than requested, warn in logs
+      if (actualDepositAmount < amountBaseUnits! * 0.95) {
+        console.log('[Claim API] Warning: Depositing less than requested due to balance constraints');
+      }
+      console.log('[Claim API] Actual SPL deposit amount:', actualDepositAmount, 'base units');
+      
+      // Check SOL balance for fees
+      const payLinkSolBalance = await connection.getBalance(payLinkKeypair.publicKey);
+      const MIN_SOL_FOR_FEES = 5_000_000; // 0.005 SOL for SPL deposit fees
+      
+      if (payLinkSolBalance < MIN_SOL_FOR_FEES) {
+        return NextResponse.json({ 
+          error: `Insufficient SOL for transaction fees: ${payLinkSolBalance} lamports. Need at least ${MIN_SOL_FOR_FEES} lamports.` 
+        }, { status: 400 });
+      }
+      
+      // Ensure circuit files are available
+      console.log('[Claim API] Step 7: Ensuring circuit files...');
+      const circuitBasePath = await ensureCircuitFiles(baseUrl);
+      console.log('[Claim API] Step 7: Circuit base path:', circuitBasePath);
+      
+      // SPL deposit to recipient using the new recipientUtxoPubkey support
+      console.log('[Claim API] Step 8: Starting SPL deposit (ZK proof generation, may take 30-60s)...');
+      console.log('[Claim API] Depositing', actualDepositAmount, 'base units of', mint, 'to user PrivacyCash');
+      const depositStart = Date.now();
+      const result = await depositSPL({
+        lightWasm,
+        storage,
+        keyBasePath: circuitBasePath,
+        publicKey: new PublicKey(userAddress),
+        connection,
+        base_units: actualDepositAmount,
+        mintAddress: new PublicKey(mint),
+        encryptionService: payLinkEncryptionService,
+        transactionSigner,
+        signer: payLinkKeypair.publicKey,
+        recipientUtxoPubkey,
+        recipientEncryptionService: userEncryptionService,
+        referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
+      });
+
+      console.log(`[Claim API] Direct SPL deposit successful (${Date.now() - depositStart}ms):`, result.tx);
+
+      return NextResponse.json({
+        tx: result.tx,
+        success: true,
+      });
     }
 
+    // SOL deposit path
     // Check actual Pay Link balance and adjust amount if needed
     const payLinkBalance = await connection.getBalance(payLinkKeypair.publicKey);
     
