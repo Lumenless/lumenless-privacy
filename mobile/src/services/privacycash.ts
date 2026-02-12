@@ -191,7 +191,9 @@ export async function withdrawFromPrivacyCash(
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for ZK proof
+    // ZK proof generation (1-2 min) + relayer submission + confirmation polling (up to 30s)
+    // Backend has 240s timeout, Vercel has 300s. Use 270s to give buffer for network latency.
+    const timeoutId = setTimeout(() => controller.abort(), 270000);
 
     const res = await fetch(withdrawUrl, {
       method: 'POST',
@@ -236,7 +238,10 @@ export async function withdrawFromPrivacyCash(
   } catch (err) {
     console.error('[PrivacyCash] withdraw: error', err);
     if (err instanceof Error && err.name === 'AbortError') {
-      return { success: false, error: 'Withdraw request timed out. Please try again.' };
+      return { 
+        success: false, 
+        error: 'Withdraw request timed out. ZK proof generation can take several minutes. Please try again or check your balance later.' 
+      };
     }
     return { 
       success: false, 

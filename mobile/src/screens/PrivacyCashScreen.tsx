@@ -281,14 +281,22 @@ export default function PrivacyCashScreen() {
               editable={!withdrawing}
             />
             {withdrawError ? <Text style={styles.errorText}>{withdrawError}</Text> : null}
-            <View style={styles.modalButtons}>
-              <Pressable style={({ pressed }) => [styles.modalBtn, styles.modalBtnSecondary, pressed && styles.modalBtnPressed]} onPress={() => !withdrawing && setWithdrawModalVisible(false)} disabled={withdrawing}>
-                <Text style={styles.modalBtnTextSecondary}>Cancel</Text>
-              </Pressable>
-              <Pressable style={({ pressed }) => [styles.modalBtn, styles.modalBtnPrimary, pressed && styles.modalBtnPressed, withdrawing && styles.modalBtnDisabled]} onPress={handleWithdraw} disabled={withdrawing}>
-                {withdrawing ? <ActivityIndicator size="small" color={colors.text} /> : <Text style={styles.modalBtnTextPrimary}>Withdraw</Text>}
-              </Pressable>
-            </View>
+            {withdrawing ? (
+              <View style={styles.withdrawingContainer}>
+                <ActivityIndicator size="large" color={colors.accent} />
+                <Text style={styles.withdrawingText}>Generating ZK proof...</Text>
+                <Text style={styles.withdrawingSubtext}>This may take 2-4 minutes. Please keep the app open.</Text>
+              </View>
+            ) : (
+              <View style={styles.modalButtons}>
+                <Pressable style={({ pressed }) => [styles.modalBtn, styles.modalBtnSecondary, pressed && styles.modalBtnPressed]} onPress={() => setWithdrawModalVisible(false)}>
+                  <Text style={styles.modalBtnTextSecondary}>Cancel</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.modalBtn, styles.modalBtnPrimary, pressed && styles.modalBtnPressed]} onPress={handleWithdraw}>
+                  <Text style={styles.modalBtnTextPrimary}>Withdraw</Text>
+                </Pressable>
+              </View>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -514,5 +522,20 @@ const styles = StyleSheet.create({
   modalBtnTextSecondary: {
     ...typography.button,
     color: colors.textMuted,
+  },
+  withdrawingContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+    gap: spacing.md,
+  },
+  withdrawingText: {
+    ...typography.subtitle,
+    color: colors.text,
+    marginTop: spacing.md,
+  },
+  withdrawingSubtext: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
   },
 });

@@ -327,6 +327,7 @@ export async function POST(request: NextRequest) {
           encryptionService,
           recipient: recipientPubkey,
           mintAddress: mint!,
+          referrer: 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb',
         }),
         240_000,
         'Withdraw timed out after 4 minutes. The ZK proof generation may be stuck. Please try again.'
