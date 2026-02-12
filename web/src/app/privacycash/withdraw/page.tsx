@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { Suspense, useMemo, useState, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -13,7 +13,7 @@ import { useConnector, useAccount, useTransactionSigner } from '@solana/connecto
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WalletButton } from '@/components/WalletButton';
 import { motion } from 'framer-motion';
-import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 // Message used to derive the encryption key deterministically (matches SDK)
 const DERIVATION_MESSAGE = 'Privacy Money account sign in';
@@ -59,6 +59,18 @@ function postToMobile(type: string, data: Record<string, unknown>) {
   }
 }
 
+/** Loading fallback for Suspense boundary */
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-400 mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
 export default function WithdrawPage() {
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
@@ -74,7 +86,9 @@ export default function WithdrawPage() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppProvider connectorConfig={config}>
-        <WithdrawView />
+        <Suspense fallback={<LoadingFallback />}>
+          <WithdrawView />
+        </Suspense>
       </AppProvider>
     </QueryClientProvider>
   );
