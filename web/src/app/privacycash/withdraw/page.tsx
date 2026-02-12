@@ -1,18 +1,12 @@
 'use client';
 
 import { Suspense, useMemo, useState, useCallback, useEffect } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { AppProvider } from '@solana/connector/react';
 import { getDefaultConfig } from '@solana/connector/headless';
 import { useConnector, useAccount, useTransactionSigner } from '@solana/connector';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WalletButton } from '@/components/WalletButton';
-import { motion } from 'framer-motion';
 import { Connection, PublicKey } from '@solana/web3.js';
 
 // Message used to derive the encryption key deterministically (matches SDK)
@@ -20,9 +14,9 @@ const DERIVATION_MESSAGE = 'Privacy Money account sign in';
 
 // Token configuration
 const TOKENS = {
-  SOL: { symbol: 'SOL', decimals: 9, mint: null },
-  USDC: { symbol: 'USDC', decimals: 6, mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
-  USDT: { symbol: 'USDT', decimals: 6, mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' },
+  SOL: { symbol: 'SOL', label: '◎ SOL', decimals: 9, mint: null },
+  USDC: { symbol: 'USDC', label: '$ USDC', decimals: 6, mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+  USDT: { symbol: 'USDT', label: '$ USDT', decimals: 6, mint: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' },
 } as const;
 
 type TokenType = keyof typeof TOKENS;
@@ -107,10 +101,10 @@ function handleMobileSignatureResponse(data: { requestId: string; signature?: st
 /** Loading fallback for Suspense boundary */
 function LoadingFallback() {
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#0a0a0f' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#08080c' }}>
       <div className="text-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-400 mx-auto mb-4"></div>
-        <p className="text-gray-400">Loading...</p>
+        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <p style={{ color: '#71717a' }}>Loading...</p>
       </div>
     </div>
   );
@@ -480,235 +474,434 @@ function WithdrawView() {
     }
   }, [isMobileWebView]);
 
+  // CSS-in-JS styles matching mobile theme
+  const styles = {
+    container: {
+      minHeight: '100vh',
+      backgroundColor: '#08080c',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px',
+    },
+    modal: {
+      backgroundColor: '#141418',
+      borderRadius: '20px',
+      padding: '24px',
+      width: '100%',
+      maxWidth: '400px',
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+    },
+    title: {
+      fontSize: '20px',
+      fontWeight: '700',
+      color: '#fafafa',
+      marginBottom: '8px',
+    },
+    tokenRow: {
+      display: 'flex',
+      gap: '8px',
+      marginBottom: '16px',
+    },
+    tokenBtn: {
+      padding: '8px 12px',
+      borderRadius: '10px',
+      backgroundColor: '#141418',
+      border: '1px solid rgba(255, 255, 255, 0.06)',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+      fontSize: '13px',
+      fontWeight: '500',
+      color: '#a1a1aa',
+    },
+    tokenBtnActive: {
+      backgroundColor: 'rgba(139, 92, 246, 0.15)',
+      borderColor: '#8b5cf6',
+      color: '#8b5cf6',
+      fontWeight: '600',
+    },
+    desc: {
+      fontSize: '13px',
+      fontWeight: '500',
+      color: '#71717a',
+      marginBottom: '16px',
+    },
+    input: {
+      width: '100%',
+      backgroundColor: '#08080c',
+      border: '1px solid rgba(255, 255, 255, 0.06)',
+      borderRadius: '14px',
+      padding: '12px 16px',
+      fontSize: '15px',
+      fontWeight: '500',
+      color: '#fafafa',
+      marginBottom: '12px',
+      outline: 'none',
+      boxSizing: 'border-box' as const,
+    },
+    inputError: {
+      borderColor: '#ef4444',
+    },
+    buttons: {
+      display: 'flex',
+      gap: '8px',
+      marginTop: '16px',
+    },
+    btn: {
+      flex: 1,
+      padding: '12px',
+      borderRadius: '14px',
+      fontSize: '15px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      border: 'none',
+      minHeight: '48px',
+      transition: 'opacity 0.2s',
+    },
+    btnPrimary: {
+      backgroundColor: '#8b5cf6',
+      color: '#fafafa',
+    },
+    btnSecondary: {
+      backgroundColor: '#141418',
+      border: '1px solid rgba(255, 255, 255, 0.06)',
+      color: '#71717a',
+    },
+    btnDisabled: {
+      opacity: 0.5,
+      cursor: 'not-allowed',
+    },
+    loadingContainer: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      alignItems: 'center',
+      padding: '32px 0',
+      gap: '12px',
+    },
+    loadingText: {
+      fontSize: '15px',
+      fontWeight: '500',
+      color: '#fafafa',
+    },
+    loadingSubtext: {
+      fontSize: '13px',
+      fontWeight: '500',
+      color: '#71717a',
+      textAlign: 'center' as const,
+    },
+    errorText: {
+      color: '#ef4444',
+      fontSize: '13px',
+      fontWeight: '500',
+      marginBottom: '12px',
+    },
+    successText: {
+      color: '#22c55e',
+      fontSize: '13px',
+      fontWeight: '500',
+      marginBottom: '8px',
+    },
+    balanceDisplay: {
+      backgroundColor: '#08080c',
+      borderRadius: '14px',
+      padding: '16px',
+      marginBottom: '16px',
+      border: '1px solid rgba(255, 255, 255, 0.06)',
+    },
+    balanceLabel: {
+      fontSize: '13px',
+      fontWeight: '500',
+      color: '#71717a',
+      marginBottom: '4px',
+    },
+    balanceValue: {
+      fontSize: '24px',
+      fontWeight: '700',
+      color: '#8b5cf6',
+    },
+    refreshBtn: {
+      fontSize: '12px',
+      color: '#71717a',
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0,
+      marginTop: '4px',
+    },
+    link: {
+      color: '#8b5cf6',
+      fontSize: '13px',
+      textDecoration: 'underline',
+      marginTop: '8px',
+      display: 'block',
+    },
+    maxBtn: {
+      position: 'absolute' as const,
+      right: '12px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      background: 'none',
+      border: 'none',
+      color: '#8b5cf6',
+      fontSize: '12px',
+      fontWeight: '600',
+      cursor: 'pointer',
+      padding: '4px 8px',
+    },
+    inputWrapper: {
+      position: 'relative' as const,
+      marginBottom: '12px',
+    },
+    walletSection: {
+      textAlign: 'center' as const,
+      padding: '32px 0',
+    },
+    walletText: {
+      color: '#71717a',
+      fontSize: '15px',
+      marginBottom: '16px',
+    },
+    progressBox: {
+      backgroundColor: 'rgba(139, 92, 246, 0.15)',
+      border: '1px solid rgba(139, 92, 246, 0.3)',
+      borderRadius: '14px',
+      padding: '12px',
+      marginBottom: '12px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+    },
+    spinner: {
+      width: '16px',
+      height: '16px',
+      border: '2px solid #8b5cf6',
+      borderTopColor: 'transparent',
+      borderRadius: '50%',
+      animation: 'spin 1s linear infinite',
+    },
+    progressText: {
+      color: '#8b5cf6',
+      fontSize: '13px',
+      fontWeight: '500',
+    },
+  };
+
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ backgroundColor: '#0a0a0f' }}>
-      {/* Animated background */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 0.15 }}
-          transition={{ duration: 1 }}
-          className="absolute inset-0"
-          style={{
-            background: 'radial-gradient(ellipse at 50% 0%, rgba(139, 92, 246, 0.3) 0%, transparent 50%)',
-          }}
-        />
-      </div>
-
-      {/* Header */}
-      <header className="relative z-10 border-b border-white/10 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-            <Image src="/logo.svg" alt="Lumenless Logo" width={32} height={32} />
-            <span className="text-xl font-semibold text-white">Lumenless</span>
-          </Link>
-          <div className="flex items-center gap-2">
+    <>
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        input::placeholder {
+          color: #71717a;
+        }
+        button:hover:not(:disabled) {
+          opacity: 0.8;
+        }
+        input:focus {
+          border-color: rgba(139, 92, 246, 0.5);
+        }
+      `}</style>
+      
+      <div style={styles.container}>
+        <div style={styles.modal}>
+          {/* Title with close button for mobile */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h1 style={styles.title}>Withdraw</h1>
             {isMobileWebView && (
-              <Button 
+              <button
                 onClick={handleClose}
-                variant="outline"
-                className="border-white/20 text-white hover:bg-white/10"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#71717a',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  lineHeight: 1,
+                }}
               >
-                Close
-              </Button>
+                ×
+              </button>
             )}
-            <WalletButton />
           </div>
-        </div>
-      </header>
 
-      {/* Main content */}
-      <main className="relative z-10 container mx-auto px-4 py-8 max-w-lg">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-6"
-        >
-          <h1 className="text-3xl font-bold text-white mb-2">PrivacyCash Withdraw</h1>
-          <p className="text-gray-400 text-sm">
-            Withdraw your private balance to any Solana wallet
-          </p>
-        </motion.div>
-
-        <Card className="bg-white/5 border-white/10 backdrop-blur-sm">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-white flex items-center gap-2">
-              <span className="text-2xl">📤</span>
-              Withdraw
-            </CardTitle>
-            <CardDescription className="text-gray-400">
-              Select token, enter recipient and amount
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!connected ? (
-              <div className="text-center py-8">
-                <p className="text-gray-400 mb-4">Connect your wallet to continue</p>
-                <WalletButton />
+          {!connected ? (
+            <div style={styles.walletSection}>
+              <p style={styles.walletText}>Connect your wallet to continue</p>
+              <WalletButton />
+            </div>
+          ) : !hasDerivedKeys ? (
+            <div style={styles.walletSection}>
+              <p style={styles.walletText}>Sign a message to load your balances</p>
+              <button
+                onClick={fetchBalances}
+                disabled={isLoading}
+                style={{
+                  ...styles.btn,
+                  ...styles.btnPrimary,
+                  ...(isLoading ? styles.btnDisabled : {}),
+                  flex: 'none',
+                  padding: '12px 24px',
+                }}
+              >
+                {isLoading ? (progressMessage || 'Loading...') : 'Load Balances'}
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Token Selection */}
+              <div style={styles.tokenRow}>
+                {(Object.keys(TOKENS) as TokenType[]).map((token) => (
+                  <button
+                    key={token}
+                    onClick={() => setSelectedToken(token)}
+                    disabled={isWithdrawing}
+                    style={{
+                      ...styles.tokenBtn,
+                      ...(selectedToken === token ? styles.tokenBtnActive : {}),
+                      ...(isWithdrawing ? styles.btnDisabled : {}),
+                    }}
+                  >
+                    {TOKENS[token].label}
+                  </button>
+                ))}
               </div>
-            ) : !hasDerivedKeys ? (
-              <div className="text-center py-8">
-                <p className="text-gray-400 mb-4">Sign a message to load your balances</p>
-                <Button 
+
+              {/* Balance Display */}
+              <div style={styles.balanceDisplay}>
+                <p style={styles.balanceLabel}>Available Balance</p>
+                <p style={styles.balanceValue}>
+                  {formattedBalance} {selectedToken}
+                </p>
+                <button
                   onClick={fetchBalances}
                   disabled={isLoading}
-                  className="bg-violet-500 hover:bg-violet-600 text-white"
+                  style={{ ...styles.refreshBtn, ...(isLoading ? styles.btnDisabled : {}) }}
                 >
-                  {isLoading ? (progressMessage || 'Loading...') : 'Load Balances'}
-                </Button>
+                  {isLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
               </div>
-            ) : (
-              <>
-                {/* Token Selection */}
-                <div>
-                  <label className="text-sm text-gray-400 mb-2 block">Token</label>
-                  <div className="flex gap-2">
-                    {(Object.keys(TOKENS) as TokenType[]).map((token) => (
-                      <Button
-                        key={token}
-                        onClick={() => setSelectedToken(token)}
-                        variant={selectedToken === token ? 'default' : 'outline'}
-                        className={selectedToken === token 
-                          ? 'bg-violet-500 hover:bg-violet-600 text-white flex-1'
-                          : 'border-white/20 text-white hover:bg-white/10 flex-1'
-                        }
-                        disabled={isWithdrawing}
-                      >
-                        {token}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
 
-                {/* Balance Display */}
-                <div className="p-4 bg-white/5 rounded-lg border border-white/10">
-                  <p className="text-sm text-gray-400 mb-1">Available Balance</p>
-                  <p className="text-2xl font-bold text-violet-400">
-                    {formattedBalance} {selectedToken}
+              <p style={styles.desc}>Send to a Solana wallet address</p>
+
+              {/* Recipient Address */}
+              <input
+                type="text"
+                placeholder="Destination wallet address"
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+                disabled={isWithdrawing}
+                style={{
+                  ...styles.input,
+                  ...(isWithdrawing ? styles.btnDisabled : {}),
+                }}
+              />
+
+              {/* Amount with MAX button */}
+              <div style={styles.inputWrapper}>
+                <input
+                  type="text"
+                  placeholder={`Amount ${TOKENS[selectedToken].label}`}
+                  value={withdrawAmount}
+                  onChange={(e) => {
+                    if (/^\d*\.?\d*$/.test(e.target.value)) {
+                      setWithdrawAmount(e.target.value);
+                    }
+                  }}
+                  disabled={isWithdrawing}
+                  style={{
+                    ...styles.input,
+                    marginBottom: 0,
+                    paddingRight: '60px',
+                    ...(isWithdrawing ? styles.btnDisabled : {}),
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (currentBalance !== null) {
+                      const maxAmount = currentBalance / Math.pow(10, tokenConfig.decimals);
+                      setWithdrawAmount(maxAmount.toString());
+                    }
+                  }}
+                  disabled={isWithdrawing}
+                  style={{ ...styles.maxBtn, ...(isWithdrawing ? styles.btnDisabled : {}) }}
+                >
+                  MAX
+                </button>
+              </div>
+
+              {/* Error Message */}
+              {error && <p style={styles.errorText}>{error}</p>}
+
+              {/* Progress Message */}
+              {progressMessage && (
+                <div style={styles.progressBox}>
+                  <div style={styles.spinner}></div>
+                  <span style={styles.progressText}>{progressMessage}</span>
+                </div>
+              )}
+
+              {/* Result Message */}
+              {withdrawResult && (
+                <div style={{
+                  backgroundColor: withdrawResult.success ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  border: `1px solid ${withdrawResult.success ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                  borderRadius: '14px',
+                  padding: '12px',
+                  marginBottom: '12px',
+                }}>
+                  <p style={withdrawResult.success ? styles.successText : styles.errorText}>
+                    {withdrawResult.message}
                   </p>
-                  <Button 
-                    onClick={fetchBalances}
-                    disabled={isLoading}
-                    variant="link"
-                    className="text-gray-400 hover:text-white p-0 h-auto text-xs"
-                  >
-                    {isLoading ? 'Refreshing...' : 'Refresh'}
-                  </Button>
-                </div>
-
-                {/* Recipient Address */}
-                <div>
-                  <label className="text-sm text-gray-400 mb-2 block">Recipient Address</label>
-                  <Input
-                    placeholder="Enter Solana address..."
-                    value={withdrawAddress}
-                    onChange={(e) => setWithdrawAddress(e.target.value)}
-                    className="bg-white/5 border-white/20 text-white"
-                    disabled={isWithdrawing}
-                  />
-                </div>
-                
-                {/* Amount */}
-                <div>
-                  <label className="text-sm text-gray-400 mb-2 block">Amount ({selectedToken})</label>
-                  <div className="relative">
-                    <Input
-                      type="text"
-                      placeholder="0.0"
-                      value={withdrawAmount}
-                      onChange={(e) => {
-                        if (/^\d*\.?\d*$/.test(e.target.value)) {
-                          setWithdrawAmount(e.target.value);
-                        }
-                      }}
-                      className="bg-white/5 border-white/20 text-white pr-16"
-                      disabled={isWithdrawing}
-                    />
-                    <Button
-                      onClick={() => {
-                        if (currentBalance !== null) {
-                          const maxAmount = currentBalance / Math.pow(10, tokenConfig.decimals);
-                          setWithdrawAmount(maxAmount.toString());
-                        }
-                      }}
-                      variant="ghost"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-violet-400 hover:text-violet-300 text-xs h-6 px-2"
-                      disabled={isWithdrawing}
+                  {withdrawResult.tx && (
+                    <a
+                      href={`https://explorer.solana.com/tx/${withdrawResult.tx}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.link}
                     >
-                      MAX
-                    </Button>
-                  </div>
+                      View transaction →
+                    </a>
+                  )}
                 </div>
-                
-                {/* Progress Message */}
-                {progressMessage && (
-                  <div className="p-3 bg-violet-500/20 border border-violet-500/30 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-400"></div>
-                      <p className="text-violet-400 text-sm">{progressMessage}</p>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Withdraw Button */}
-                <Button 
-                  onClick={handleWithdraw}
-                  disabled={isWithdrawing || !withdrawAddress || !withdrawAmount || currentBalance === 0}
-                  className="w-full bg-violet-500 hover:bg-violet-600 text-white h-12 text-lg"
-                >
-                  {isWithdrawing ? 'Processing...' : 'Withdraw'}
-                </Button>
-                
-                {/* Result Message */}
-                {withdrawResult && (
-                  <div className={`p-3 rounded-lg ${
-                    withdrawResult.success 
-                      ? 'bg-green-500/20 border border-green-500/30' 
-                      : 'bg-red-500/20 border border-red-500/30'
-                  }`}>
-                    <p className={withdrawResult.success ? 'text-green-400' : 'text-red-400'}>
-                      {withdrawResult.message}
-                    </p>
-                    {withdrawResult.tx && (
-                      <a 
-                        href={`https://explorer.solana.com/tx/${withdrawResult.tx}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-violet-400 text-sm underline mt-2 block"
-                      >
-                        View transaction →
-                      </a>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-            
-            {error && (
-              <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
 
-        {/* Info for mobile users */}
-        {isMobileWebView && (
-          <p className="text-center text-gray-500 text-xs mt-4">
-            ZK proof generation runs in your browser for speed (10-20 seconds)
-          </p>
-        )}
-      </main>
-
-      {/* Footer - only show on desktop */}
-      {!isMobileWebView && (
-        <footer className="relative z-10 border-t border-white/10 mt-auto">
-          <div className="container mx-auto px-4 py-6 text-center">
-            <p className="text-gray-500 text-sm">© 2025 Lumenless. Powered by PrivacyCash.</p>
-          </div>
-        </footer>
-      )}
-    </div>
+              {/* Buttons */}
+              {isWithdrawing ? (
+                <div style={styles.loadingContainer}>
+                  <div style={{ ...styles.spinner, width: '32px', height: '32px', borderWidth: '3px' }}></div>
+                  <p style={styles.loadingText}>Generating ZK proof...</p>
+                  <p style={styles.loadingSubtext}>
+                    This takes 10-20 seconds in your browser.
+                    {isMobileWebView && ' Please keep the app open.'}
+                  </p>
+                </div>
+              ) : (
+                <div style={styles.buttons}>
+                  <button
+                    onClick={handleClose}
+                    style={{ ...styles.btn, ...styles.btnSecondary }}
+                  >
+                    {isMobileWebView ? 'Cancel' : 'Close'}
+                  </button>
+                  <button
+                    onClick={handleWithdraw}
+                    disabled={!withdrawAddress || !withdrawAmount || currentBalance === 0}
+                    style={{
+                      ...styles.btn,
+                      ...styles.btnPrimary,
+                      ...(!withdrawAddress || !withdrawAmount || currentBalance === 0 ? styles.btnDisabled : {}),
+                    }}
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
