@@ -5,11 +5,11 @@ export const FALLBACK_RPC_URL = 'https://api.mainnet-beta.solana.com';
 
 export const SOLANA_NETWORK = 'mainnet-beta';
 
-// Mints that can be claimed into PrivacyCash (only SOL for now)
+// Mints that can be claimed into PrivacyCash
 export const PRIVACYCASH_CLAIMABLE_MINTS = {
   SOL: 'So11111111111111111111111111111111111111112',
-  // USDC and USDT temporarily disabled - direct claim not yet supported
-  // USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  // USDT temporarily disabled
   // USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
 } as const;
 

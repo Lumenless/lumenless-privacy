@@ -356,19 +356,26 @@ export async function claimToPrivacyCash(
   const signatures: string[] = [];
   const errors: string[] = [];
 
+  // Supported mints for PrivacyCash
+  const supportedMints = new Set<string>([
+    PRIVACYCASH_CLAIMABLE_MINTS.SOL,
+    PRIVACYCASH_CLAIMABLE_MINTS.USDC,
+  ]);
+
   // Step 2: Deposit each token directly from Pay Link to User's PrivacyCash
   for (const token of claimableTokens) {
-    // Only SOL is supported for now
-    if (token.mint !== PRIVACYCASH_CLAIMABLE_MINTS.SOL) {
-      console.log(`[ClaimToPrivacyCash] Skipping non-SOL token: ${token.symbol || token.mint}`);
+    // Check if token is supported
+    if (!supportedMints.has(token.mint)) {
+      console.log(`[ClaimToPrivacyCash] Skipping unsupported token: ${token.symbol || token.mint}`);
       continue;
     }
 
-    // Amount in lamports
-    const amountLamports = token.amount;
-    const humanAmount = amountLamports / Math.pow(10, token.decimals);
+    const isSol = token.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL;
+    const tokenSymbol = token.symbol || (isSol ? 'SOL' : 'Token');
+    const amount = token.amount;
+    const humanAmount = amount / Math.pow(10, token.decimals);
     
-    console.log(`[ClaimToPrivacyCash] Direct deposit ${humanAmount} SOL (${amountLamports} lamports)...`);
+    console.log(`[ClaimToPrivacyCash] Direct deposit ${humanAmount} ${tokenSymbol} (${amount} base units)...`);
 
     try {
       const claimUrl = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/claim`;
@@ -377,8 +384,16 @@ export async function claimToPrivacyCash(
         userAddress: userPublicKey,
         signedMessageBase64,
         payLinkSecretKey: payLinkSecretKeyBase58,
-        amountLamports,
       };
+
+      // Add token-specific parameters
+      if (isSol) {
+        requestBody.amountLamports = amount;
+      } else {
+        // SPL token (USDC)
+        requestBody.mint = token.mint;
+        requestBody.amountBaseUnits = amount;
+      }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min for ZK proof
@@ -417,23 +432,21 @@ export async function claimToPrivacyCash(
 
       if (data.success && data.tx) {
         signatures.push(data.tx);
-        console.log(`[ClaimToPrivacyCash] SOL direct deposit successful:`, data.tx);
+        console.log(`[ClaimToPrivacyCash] ${tokenSymbol} direct deposit successful:`, data.tx);
       } else {
         throw new Error(data.error || 'Unknown error');
       }
 
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
-      errors.push(`SOL: ${errMsg}`);
-      console.error(`[ClaimToPrivacyCash] SOL direct deposit error:`, err);
+      errors.push(`${tokenSymbol}: ${errMsg}`);
+      console.error(`[ClaimToPrivacyCash] ${tokenSymbol} direct deposit error:`, err);
     }
   }
 
   // Return result
   const successCount = signatures.length;
-  const totalCount = claimableTokens.filter(t => 
-    t.mint === PRIVACYCASH_CLAIMABLE_MINTS.SOL
-  ).length;
+  const totalCount = claimableTokens.filter(t => supportedMints.has(t.mint)).length;
 
   if (successCount === 0) {
     return {

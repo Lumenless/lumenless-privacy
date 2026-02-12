@@ -61,6 +61,7 @@ export default function PayLinkDetailsScreen() {
   // Claim into PrivacyCash modal state
   const [privacyCashModalVisible, setPrivacyCashModalVisible] = useState(false);
   const [privacyCashClaiming, setPrivacyCashClaiming] = useState(false);
+  const [selectedClaimToken, setSelectedClaimToken] = useState<string | null>(null);
 
   // Backup wallet modal state
   const [backupModalVisible, setBackupModalVisible] = useState(false);
@@ -132,10 +133,11 @@ export default function PayLinkDetailsScreen() {
   };
 
   const handleOpenClaimIntoPrivacyCash = () => {
-    if (!hasClaimablePrivacyCashTokens(tokens)) {
+    const claimable = getClaimablePrivacyCashTokens(tokens);
+    if (claimable.length === 0) {
       Alert.alert(
         'Nothing to claim',
-        'This invoice has no SOL. Only SOL can be claimed into PrivacyCash for now. Use "Claim publicly" for other tokens.',
+        'This invoice has no SOL or USDC. Use "Claim publicly" for other tokens.',
         [{ text: 'OK' }]
       );
       return;
@@ -144,8 +146,8 @@ export default function PayLinkDetailsScreen() {
     // Check if SOL balance is at least 0.008 SOL (8,000,000 lamports) for fees
     const solToken = tokens.find(t => t.mint === 'So11111111111111111111111111111111111111112');
     const MIN_SOL_FOR_CLAIM = 8_000_000; // 0.008 SOL in lamports
-    if (solToken && solToken.amount < MIN_SOL_FOR_CLAIM) {
-      const solBalance = solToken.amount / 1e9;
+    if (!solToken || solToken.amount < MIN_SOL_FOR_CLAIM) {
+      const solBalance = solToken ? solToken.amount / 1e9 : 0;
       Alert.alert(
         'Insufficient SOL',
         `This invoice needs at least 0.008 SOL to claim into PrivacyCash (for transaction fees). Current balance: ${solBalance.toFixed(4)} SOL.\n\nUse "Claim publicly" instead, or add more SOL to this invoice.`,
@@ -154,12 +156,15 @@ export default function PayLinkDetailsScreen() {
       return;
     }
     
+    // Pre-select first claimable token
+    setSelectedClaimToken(claimable[0].mint);
     setPrivacyCashModalVisible(true);
   };
 
   const handleClosePrivacyCashModal = () => {
     if (!privacyCashClaiming) {
       setPrivacyCashModalVisible(false);
+      setSelectedClaimToken(null);
     }
   };
 
@@ -191,7 +196,19 @@ export default function PayLinkDetailsScreen() {
   };
 
   const handleClaimIntoPrivacyCash = async () => {
+    if (!selectedClaimToken) {
+      Alert.alert('Error', 'Please select a token to claim.', [{ text: 'OK' }]);
+      return;
+    }
+    
     const claimable = getClaimablePrivacyCashTokens(tokens);
+    const selectedTokenData = claimable.find(t => t.mint === selectedClaimToken);
+    
+    if (!selectedTokenData) {
+      Alert.alert('Error', 'Selected token not found.', [{ text: 'OK' }]);
+      return;
+    }
+    
     const payLinkHasSol = payLinkHasSolForGas(tokens);
 
     setPrivacyCashClaiming(true);
@@ -231,21 +248,24 @@ export default function PayLinkDetailsScreen() {
           return new Uint8Array(signedTx.serialize());
         };
 
+        // Only claim the selected token
         const result: ClaimToPrivacyCashResult = await claimToPrivacyCash(
           secretKey,
           userPublicKey,
           signMessage,
           signTransaction,
-          claimable,
+          [selectedTokenData], // Only the selected token
           payLinkHasSol
         );
 
         if (result.success) {
-          logEvent(analyticsEvents.deposit, { source: 'pay_link_claim', pay_link_id: payLink.id });
+          const tokenSymbol = selectedTokenData.symbol || 'Token';
+          logEvent(analyticsEvents.deposit, { source: 'pay_link_claim', pay_link_id: payLink.id, token: tokenSymbol });
           setPrivacyCashModalVisible(false);
+          setSelectedClaimToken(null);
           Alert.alert(
             'Claim Successful',
-            `Deposited into your PrivacyCash balance.${result.signatures.length ? `\n\nTx: ${result.signatures[0]}` : ''}`,
+            `Deposited ${tokenSymbol} into your PrivacyCash balance.${result.signatures.length ? `\n\nTx: ${result.signatures[0]}` : ''}`,
             [{ text: 'OK' }]
           );
           loadTokens();
@@ -619,22 +639,46 @@ export default function PayLinkDetailsScreen() {
           <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>Claim into PrivacyCash</Text>
             <Text style={styles.modalDesc}>
-              Only SOL can be deposited into your PrivacyCash balance for now. Use "Claim publicly" for other tokens.
+              Select a token to deposit into your PrivacyCash balance.
             </Text>
             {(() => {
               const claimable = getClaimablePrivacyCashTokens(tokens);
-              const payLinkHasSol = payLinkHasSolForGas(tokens);
               return (
                 <>
                   <View style={styles.claimableList}>
-                    {claimable.map((item) => (
-                      <View key={item.mint} style={styles.claimableRow}>
-                        <Text style={styles.claimableSymbol}>{item.symbol ?? item.mint.slice(0, 8)}</Text>
-                        <Text style={styles.claimableAmount}>
-                          {formatBalance(item.amount, item.decimals)} {item.symbol ?? ''}
-                        </Text>
-                      </View>
-                    ))}
+                    {claimable.map((item) => {
+                      const isSelected = selectedClaimToken === item.mint;
+                      return (
+                        <Pressable
+                          key={item.mint}
+                          style={[
+                            styles.claimableRow,
+                            styles.claimableRowSelectable,
+                            isSelected && styles.claimableRowSelected,
+                          ]}
+                          onPress={() => setSelectedClaimToken(item.mint)}
+                          disabled={privacyCashClaiming}
+                        >
+                          <View style={styles.claimableRowLeft}>
+                            <View style={[
+                              styles.radioOuter,
+                              isSelected && styles.radioOuterSelected
+                            ]}>
+                              {isSelected && <View style={styles.radioInner} />}
+                            </View>
+                            <Text style={[
+                              styles.claimableSymbol,
+                              isSelected && styles.claimableSymbolSelected
+                            ]}>
+                              {item.symbol ?? item.mint.slice(0, 8)}
+                            </Text>
+                          </View>
+                          <Text style={styles.claimableAmount}>
+                            {formatBalance(item.amount, item.decimals)} {item.symbol ?? ''}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
                   <View style={styles.modalButtons}>
                     <Pressable
@@ -654,10 +698,10 @@ export default function PayLinkDetailsScreen() {
                         styles.modalBtn,
                         styles.modalBtnPrimary,
                         pressed && styles.modalBtnPressed,
-                        privacyCashClaiming && styles.modalBtnDisabled,
+                        (privacyCashClaiming || !selectedClaimToken) && styles.modalBtnDisabled,
                       ]}
                       onPress={handleClaimIntoPrivacyCash}
-                      disabled={privacyCashClaiming}
+                      disabled={privacyCashClaiming || !selectedClaimToken}
                     >
                       {privacyCashClaiming ? (
                         <ActivityIndicator size="small" color={colors.text} />
@@ -1108,9 +1152,6 @@ const styles = StyleSheet.create({
   },
   claimableList: {
     marginVertical: spacing.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.surface,
     borderRadius: radius.md,
     gap: spacing.xs,
   },
@@ -1119,10 +1160,48 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  claimableRowSelectable: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  claimableRowSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentDim,
+  },
+  claimableRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  radioOuterSelected: {
+    borderColor: colors.accent,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.accent,
+  },
   claimableSymbol: {
     ...typography.body,
     fontWeight: '600',
     color: colors.text,
+  },
+  claimableSymbolSelected: {
+    color: colors.accent,
   },
   claimableAmount: {
     ...typography.body,
