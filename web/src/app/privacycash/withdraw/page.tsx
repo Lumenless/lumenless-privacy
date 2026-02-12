@@ -478,7 +478,7 @@ function WithdrawView() {
         ? window.localStorage 
         : createMemoryStorage();
       
-      setProgressMessage('Generating ZK proof... (10-20 seconds)');
+      setProgressMessage('Generating ZK proof...');
       
       let result: { tx: string; isPartial?: boolean };
       
@@ -980,7 +980,7 @@ function WithdrawView() {
                   <div style={{ ...styles.spinner, width: '32px', height: '32px', borderWidth: '3px' }}></div>
                   <p style={styles.loadingText}>Generating ZK proof...</p>
                   <p style={styles.loadingSubtext}>
-                    This takes 10-20 seconds in your browser.
+                    This takes approximately 10-20 seconds.
                     {isMobileWebView && ' Please keep the app open.'}
                   </p>
                 </div>
