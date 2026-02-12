@@ -191,9 +191,9 @@ export async function withdrawFromPrivacyCash(
     }
 
     const controller = new AbortController();
-    // ZK proof generation (1-2 min) + relayer submission + confirmation polling (up to 30s)
-    // Backend has 240s timeout, Vercel has 300s. Use 270s to give buffer for network latency.
-    const timeoutId = setTimeout(() => controller.abort(), 270000);
+    // Backend runs ZK proof on serverless (slower than browser WASM - can take 1-3 min on cold start)
+    // Backend has 240s internal timeout, Vercel has 300s max. Use 250s to stay under backend timeout.
+    const timeoutId = setTimeout(() => controller.abort(), 250000);
 
     const res = await fetch(withdrawUrl, {
       method: 'POST',

@@ -168,6 +168,17 @@ export default function PayLinksScreen() {
     }
   }, []);
 
+  // Refresh balance when screen comes into focus (e.g., after returning from WebView withdraw)
+  useFocusEffect(
+    useCallback(() => {
+      // Only refresh if already connected (don't trigger wallet connection)
+      if (pcUserAddress && !pcLoading) {
+        console.log('[PayLinksScreen] Screen focused - refreshing balance');
+        handleConnectAndLoadBalance();
+      }
+    }, [pcUserAddress, pcLoading, handleConnectAndLoadBalance])
+  );
+
   const openWithdrawModal = useCallback((token: TokenKind) => {
     setWithdrawToken(token);
     setWithdrawAddress('');
@@ -175,6 +186,14 @@ export default function PayLinksScreen() {
     setWithdrawError('');
     setWithdrawModalVisible(true);
   }, []);
+
+  // Open WebView-based withdraw (faster - runs ZK proof in browser)
+  const openWebViewWithdraw = useCallback((token?: TokenKind) => {
+    navigation.navigate('WebViewWithdraw', {
+      token: token || 'SOL',
+    });
+    // Note: Balance will refresh automatically when screen focuses
+  }, [navigation]);
 
   const handleWithdraw = useCallback(async () => {
     const address = withdrawAddress.trim();
@@ -457,7 +476,7 @@ export default function PayLinksScreen() {
           ) : (
             <Pressable
               style={({ pressed }) => [styles.monoBtn, styles.monoBtnSecondary, styles.monoBtnCompact, pressed && styles.monoBtnPressed]}
-              onPress={() => openWithdrawModal('SOL')}
+              onPress={() => openWebViewWithdraw('SOL')}
             >
               <Text style={styles.monoBtnTextSecondary}>Withdraw</Text>
             </Pressable>
@@ -588,7 +607,7 @@ export default function PayLinksScreen() {
               <View style={styles.withdrawingContainer}>
                 <ActivityIndicator size="large" color={colors.accent} />
                 <Text style={styles.withdrawingText}>Generating ZK proof...</Text>
-                <Text style={styles.withdrawingSubtext}>This may take 2-4 minutes. Please keep the app open.</Text>
+                <Text style={styles.withdrawingSubtext}>This may take 1-3 minutes on our servers. Please keep the app open.</Text>
               </View>
             ) : (
               <View style={styles.modalButtons}>

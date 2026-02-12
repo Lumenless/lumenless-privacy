@@ -285,7 +285,7 @@ export default function PrivacyCashScreen() {
               <View style={styles.withdrawingContainer}>
                 <ActivityIndicator size="large" color={colors.accent} />
                 <Text style={styles.withdrawingText}>Generating ZK proof...</Text>
-                <Text style={styles.withdrawingSubtext}>This may take 2-4 minutes. Please keep the app open.</Text>
+                <Text style={styles.withdrawingSubtext}>This may take 1-3 minutes on our servers. Please keep the app open.</Text>
               </View>
             ) : (
               <View style={styles.modalButtons}>
