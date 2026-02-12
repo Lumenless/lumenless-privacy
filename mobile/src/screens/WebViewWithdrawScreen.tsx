@@ -86,7 +86,7 @@ export default function WebViewWithdrawScreen() {
           identity: {
             name: 'Lumenless',
             uri: 'https://lumenless.com',
-            icon: 'https://lumenless.com/logo.svg',
+            icon: '/logo.svg', // Must be relative URI for MWA
           },
           cluster: 'mainnet-beta',
         });
