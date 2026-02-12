@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import { initFirebase } from './src/services/firebase';
+import { initFirebase, initCrashlytics, crashLog } from './src/services/firebase';
 import { hasMintedLumenId, setLumenIdMinted, setOnboardingCompleted } from './src/services/onboarding';
 import {
   setNotificationHandler,
@@ -15,6 +15,7 @@ import {
 } from './src/services/pushNotifications';
 
 initFirebase();
+initCrashlytics();
 setNotificationHandler();
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
   const pushListenersRef = useRef<boolean>(false);
 
   useEffect(() => {
+    crashLog('App mounted, checking onboarding state');
     hasMintedLumenId().then(setHasMinted);
   }, []);
 
