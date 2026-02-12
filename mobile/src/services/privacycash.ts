@@ -124,6 +124,65 @@ export async function getPrivacyCashBalance(
 }
 
 /**
+ * Fetch PrivacyCash balance using a pre-signed signature (no wallet interaction needed).
+ * Use this to refresh balances without re-authorizing the wallet.
+ */
+export async function getPrivacyCashBalanceWithSignature(
+  userPublicKey: string,
+  signedMessageBase64: string
+): Promise<PrivacyCashBalances> {
+  console.log('[PrivacyCash] getBalanceWithSignature: start', { address: userPublicKey.slice(0, 8) + '...' });
+
+  const url = `${PRIVACYCASH_API_BASE_URL}/api/privacycash/balance`;
+  console.log('[PrivacyCash] getBalanceWithSignature: calling API', url);
+
+  const controller = new AbortController();
+  const timeoutMs = 60000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: userPublicKey, signedMessageBase64 }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    console.log('[PrivacyCash] getBalanceWithSignature: response status', res.status);
+    
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('[PrivacyCash] getBalanceWithSignature: API error', res.status, text);
+      let errMsg = `Balance API error: ${res.status}`;
+      try {
+        const errData = JSON.parse(text) as { error?: string };
+        if (errData?.error) errMsg = errData.error;
+      } catch {
+        if (text) errMsg = text.slice(0, 200);
+      }
+      throw new Error(errMsg);
+    }
+
+    const data = (await res.json()) as { lamports?: number; usdc?: number; usdt?: number };
+    console.log('[PrivacyCash] getBalanceWithSignature: response data', data);
+
+    const sol = (data.lamports ?? 0) / LAMPORTS_PER_SOL;
+    const usdc = (data.usdc ?? 0) / USDC_BASE_UNITS;
+    const usdt = (data.usdt ?? 0) / USDT_BASE_UNITS;
+
+    console.log('[PrivacyCash] getBalanceWithSignature: done', { sol, usdc, usdt });
+    return { sol, usdc, usdt };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Privacy Cash balance timed out. The network or RPC may be slow—try again in a moment.');
+    }
+    throw err;
+  }
+}
+
+/**
  * Withdraw from PrivacyCash via the backend API.
  * 
  * The backend handles the entire withdraw operation:

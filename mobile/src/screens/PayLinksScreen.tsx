@@ -25,6 +25,7 @@ import { logScreenView, logEvent, analyticsEvents } from '../services/firebase';
 import { testNetworkConnectivity } from '../services/balances';
 import {
   getPrivacyCashBalance,
+  getPrivacyCashBalanceWithSignature,
   withdrawFromPrivacyCash,
   PrivacyCashBalances,
   WithdrawResult,
@@ -66,6 +67,8 @@ export default function PayLinksScreen() {
   const [withdrawError, setWithdrawError] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
   const connectDoneRef = useRef(false);
+  // Store the signed message for refreshing balance without re-authorizing
+  const [pcSignature, setPcSignature] = useState<string | null>(null);
 
   const loadPayLinks = useCallback(async () => {
     setLoading(true);
@@ -139,6 +142,7 @@ export default function PayLinksScreen() {
     try {
       console.log('[PayLinksScreen] Connect wallet: loading MWA...');
       const mwa = await import('@solana-mobile/mobile-wallet-adapter-protocol-web3js');
+      const { Buffer } = await import('buffer');
       console.log('[PayLinksScreen] Connect wallet: starting transact (authorize + balance)...');
       await mwa.transact(async (wallet) => {
         console.log('[PayLinksScreen] Connect wallet: calling wallet.authorize...');
@@ -150,9 +154,15 @@ export default function PayLinksScreen() {
         const userPublicKey = base64AddressToBase58(base64Address);
         console.log('[PayLinksScreen] Connect wallet: authorized, address:', userPublicKey);
         setPcUserAddress(userPublicKey);
+        
+        // Sign and save signature for future balance refreshes
         const signMessage = async (message: Uint8Array): Promise<Uint8Array> => {
           const result = await wallet.signMessages({ addresses: [base64Address], payloads: [message] });
-          return result[0];
+          const sig = result[0];
+          // Save signature as base64 for reuse
+          const sigBase64 = Buffer.from(sig).toString('base64');
+          setPcSignature(sigBase64);
+          return sig;
         };
         console.log('[PayLinksScreen] Connect wallet: fetching PrivacyCash balance...');
         const balances = await getPrivacyCashBalance(userPublicKey, signMessage, null);
@@ -166,6 +176,7 @@ export default function PayLinksScreen() {
       setPcError(getWalletErrorMessage(err, 'Could not load balance. Connect your wallet and try again.'));
       setPcBalance(null);
       setPcUserAddress(null);
+      setPcSignature(null);
     } finally {
       connectDoneRef.current = true;
       clearTimeout(safetyTimer);
@@ -175,9 +186,37 @@ export default function PayLinksScreen() {
     }
   }, []);
 
-  // Note: We intentionally don't auto-refresh balance on screen focus
-  // because handleConnectAndLoadBalance triggers MWA authorization dialog.
-  // User can manually tap "Connect wallet" again to refresh after withdraw.
+  // Refresh balance using saved signature (no wallet authorization needed)
+  const refreshPcBalance = useCallback(async () => {
+    if (!pcUserAddress || !pcSignature) {
+      console.log('[PayLinksScreen] refreshPcBalance: no saved credentials, skipping');
+      return;
+    }
+    console.log('[PayLinksScreen] refreshPcBalance: refreshing with saved signature...');
+    setPcLoading(true);
+    setPcError(null);
+    try {
+      const balances = await getPrivacyCashBalanceWithSignature(pcUserAddress, pcSignature);
+      console.log('[PayLinksScreen] refreshPcBalance: done', { sol: balances.sol, usdc: balances.usdc, usdt: balances.usdt });
+      setPcBalance(balances);
+    } catch (err) {
+      console.error('[PayLinksScreen] refreshPcBalance: error', err);
+      // Don't clear the balance on error - keep showing old balance
+      setPcError('Could not refresh balance');
+    } finally {
+      setPcLoading(false);
+    }
+  }, [pcUserAddress, pcSignature]);
+
+  // Auto-refresh balance when returning from WebView withdraw (if we have saved credentials)
+  useFocusEffect(
+    useCallback(() => {
+      // Only refresh if we already have a connected wallet with saved signature
+      if (pcUserAddress && pcSignature) {
+        refreshPcBalance();
+      }
+    }, [pcUserAddress, pcSignature, refreshPcBalance])
+  );
 
   const openWithdrawModal = useCallback((token: TokenKind) => {
     setWithdrawToken(token);
