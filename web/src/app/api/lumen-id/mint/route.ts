@@ -18,7 +18,7 @@ import {
 import bs58 from 'bs58';
 
 const LAMPORTS_PER_SOL = 1e9;
-const MINT_FEE_SOL = 0.05;
+const MINT_FEE_SOL = 0.02;
 const MINT_FEE_LAMPORTS = BigInt(Math.floor(MINT_FEE_SOL * LAMPORTS_PER_SOL));
 /** Extra lamports for transaction fee (signatures + priority). */
 const TX_FEE_BUFFER_LAMPORTS = 50_000;
@@ -26,7 +26,7 @@ const TX_FEE_BUFFER_LAMPORTS = 50_000;
 /**
  * POST /api/lumen-id/mint
  * Builds an unsigned transaction for the user to sign:
- * 1. Transfer 0.05 SOL from user to treasury
+ * 1. Transfer 0.02 SOL from user to treasury
  * 2. Create user's ATA for Lumen ID mint if needed
  * 3. Mint 1 Lumen ID token to user (backend signs with mint authority)
  *
@@ -34,7 +34,7 @@ const TX_FEE_BUFFER_LAMPORTS = 50_000;
  * Response: { transaction: string } (base64 serialized VersionedTransaction)
  *
  * Required env (mint must be Token-2022 non-transferable; create once with scripts/create-lumen-id-mint.ts):
- * - LUMEN_ID_TREASURY: Solana address to receive the 0.05 SOL
+ * - LUMEN_ID_TREASURY: Solana address to receive the 0.02 SOL
  * - LUMEN_ID_MINT: Public key of the Lumen ID token mint (Token-2022 with NonTransferable extension)
  * - LUMEN_ID_MINT_AUTHORITY: Base58 secret key of the mint authority keypair
  */

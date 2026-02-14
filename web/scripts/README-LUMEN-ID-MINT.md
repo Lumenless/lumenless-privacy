@@ -53,7 +53,7 @@ Use the printed values:
 
 - `LUMEN_ID_MINT` = mint public key (your nice address)
 - `LUMEN_ID_MINT_AUTHORITY` = base58 secret of the **same** keypair (so the server can sign mint instructions)
-- `LUMEN_ID_TREASURY` = your treasury wallet address (receives the 0.05 SOL per mint)
+- `LUMEN_ID_TREASURY` = your treasury wallet address (receives the 0.02 SOL per mint)
 
 Optionally save the authority secret to a file and load it in prod from secrets:
 

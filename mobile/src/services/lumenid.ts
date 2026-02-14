@@ -12,8 +12,8 @@ const LUMEN_ID_API_BASE_URL =
   (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_LUMENLESS_WEB_URL) ||
   'https://lumenless.com';
 
-/** 0.05 SOL mint fee + ~0.0021 rent for ATA + ~0.00005 fee buffer (lamports). */
-const MIN_LAMPORTS_TO_MINT = 50_000_000 + 2_100_000 + 50_000;
+/** 0.02 SOL mint fee + ~0.0021 rent for ATA + ~0.00005 fee buffer (lamports). */
+const MIN_LAMPORTS_TO_MINT = 20_000_000 + 2_100_000 + 50_000;
 
 export type MintLumenIdResult = {
   success: boolean;
@@ -29,7 +29,7 @@ export type LumenIdBalanceCheck = {
 };
 
 /**
- * Check if the wallet has enough SOL to mint Lumen ID (0.05 + rent + fees).
+ * Check if the wallet has enough SOL to mint Lumen ID (0.02 + rent + fees).
  * Call this after getting the user address and before calling mintLumenId.
  */
 export async function checkLumenIdMintBalance(userAddressBase58: string): Promise<LumenIdBalanceCheck> {
