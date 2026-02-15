@@ -3,14 +3,14 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js && node scripts/patch-release-signing.js"
     },
     "preview": {
       "distribution": "internal",
-      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js && node scripts/patch-release-signing.js"
     },
     "production": {
-      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js"
+      "prebuildCommand": "expo prebuild && node scripts/patch-adaptive-icon.js && node scripts/patch-release-signing.js"
     }
   }
 }

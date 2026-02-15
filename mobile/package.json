@@ -10,7 +10,7 @@
     "android:device": "npx react-native run-android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "prebuild": "expo prebuild && node scripts/patch-adaptive-icon.js"
+    "prebuild": "expo prebuild && node scripts/patch-adaptive-icon.js && node scripts/patch-release-signing.js"
   },
   "dependencies": {
     "@craftzdog/react-native-buffer": "^6.1.1",
@@ -47,6 +47,7 @@
     "expo-notifications": "~0.32.16",
     "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
+    "expo-system-ui": "~6.0.9",
     "path-browserify": "^1.0.1",
     "privacycash": "^1.1.12",
     "react": "19.1.0",
