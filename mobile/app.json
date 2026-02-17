@@ -24,6 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "versionCode": 2,
       "package": "com.lumenless",
       "permissions": [
         "INTERNET",
