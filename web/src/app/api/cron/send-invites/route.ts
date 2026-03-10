@@ -5,6 +5,7 @@ import { Resend } from 'resend';
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const BATCH_SIZE = 10;
+const MAX_FAILURES = 3;
 
 // TEST MODE: Only send to this email. Remove to send to all waitlist entries.
 const TEST_EMAIL = '';// 'mike@dangervalley.com';
@@ -16,11 +17,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Fetch waitlist entries that haven't been invited yet (oldest first)
+  // Fetch uninvited entries that haven't failed too many times (oldest first)
   let query = supabase
     .from('waitlist')
     .select('id, email')
     .is('invited_at', null)
+    .lt('invite_fail_count', MAX_FAILURES)
     .order('created_at', { ascending: true })
     .limit(BATCH_SIZE);
 
@@ -54,6 +56,8 @@ export async function GET(request: Request) {
       if (sendError || !data) {
         const message = sendError?.message || 'Unknown Resend error';
         console.error(`Failed to send invite to ${entry.email}:`, message);
+        // Increment fail count so we skip after MAX_FAILURES attempts
+        await supabase.rpc('increment_invite_fail_count', { row_id: entry.id });
         results.push({ email: entry.email, success: false, error: message });
         continue;
       }
@@ -72,6 +76,7 @@ export async function GET(request: Request) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Failed to send invite to ${entry.email}:`, message);
+      await supabase.rpc('increment_invite_fail_count', { row_id: entry.id });
       results.push({ email: entry.email, success: false, error: message });
     }
   }
