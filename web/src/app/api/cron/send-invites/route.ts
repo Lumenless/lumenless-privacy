@@ -7,7 +7,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const BATCH_SIZE = 10;
 
 // TEST MODE: Only send to this email. Remove to send to all waitlist entries.
-const TEST_EMAIL = '';// 'mike@dangervalley.com';
+const TEST_EMAIL = 'mike@dangervalley.com';
 
 export async function GET(request: Request) {
   // Verify the request is from Vercel Cron
