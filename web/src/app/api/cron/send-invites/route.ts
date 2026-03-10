@@ -25,9 +25,9 @@ export async function GET(request: Request) {
     .limit(BATCH_SIZE);
 
   // TEST MODE: only fetch the test email
-  if (TEST_EMAIL) {
-    query = query.eq('email', TEST_EMAIL);
-  }
+  // if (TEST_EMAIL) {
+  //   query = query.eq('email', TEST_EMAIL);
+  // }
 
   const { data: entries, error: fetchError } = await query;
 
