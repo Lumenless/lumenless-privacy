@@ -18,7 +18,7 @@ import {
 import bs58 from 'bs58';
 
 const LAMPORTS_PER_SOL = 1e9;
-const MINT_FEE_SOL = 0.02;
+const MINT_FEE_SOL = 0.03;
 const MINT_FEE_LAMPORTS = BigInt(Math.floor(MINT_FEE_SOL * LAMPORTS_PER_SOL));
 /** Extra lamports for transaction fee (signatures + priority). */
 const TX_FEE_BUFFER_LAMPORTS = 50_000;

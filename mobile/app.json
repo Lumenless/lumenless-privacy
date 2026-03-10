@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lumenless",
     "slug": "lumenless",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 2,
+      "versionCode": 3,
       "package": "com.lumenless",
       "permissions": [
         "INTERNET",
