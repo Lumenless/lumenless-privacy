@@ -7,7 +7,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const BATCH_SIZE = 10;
 
 // TEST MODE: Only send to this email. Remove to send to all waitlist entries.
-const TEST_EMAIL = 'mike@dangervalley.com';
+const TEST_EMAIL = '';// 'mike@dangervalley.com';
 
 export async function GET(request: Request) {
   // Verify the request is from Vercel Cron
@@ -44,14 +44,21 @@ export async function GET(request: Request) {
 
   for (const entry of entries) {
     try {
-      await resend.emails.send({
+      const { data, error: sendError } = await resend.emails.send({
         from: 'Lumenless <invite@lumenless.com>',
         to: entry.email,
         subject: "You're invited to test Lumenless on Solana Mobile",
         html: getInviteEmailHtml(),
       });
 
-      // Mark as invited
+      if (sendError || !data) {
+        const message = sendError?.message || 'Unknown Resend error';
+        console.error(`Failed to send invite to ${entry.email}:`, message);
+        results.push({ email: entry.email, success: false, error: message });
+        continue;
+      }
+
+      // Only mark as invited after confirmed send
       const { error: updateError } = await supabase
         .from('waitlist')
         .update({ invited_at: new Date().toISOString() })
