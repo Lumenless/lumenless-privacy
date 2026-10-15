@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "clean": "rm -rf .next",
-    "dev:clean": "npm run clean && npm run dev"
+    "dev:clean": "npm run clean && npm run dev",
+    "test:tweet-orders": "node --test tests/tweet-orders.test.cjs",
+    "test:business": "node --test tests/business-x.test.cjs"
   },
   "dependencies": {
     "@bonfida/spl-name-service": "^3.0.16",
@@ -45,6 +47,7 @@
     "snarkjs": "^0.7.6",
     "tailwind-merge": "^3.3.1",
     "tweetnacl": "^1.0.3",
+    "twitter-text": "3.1.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import PublicAnalytics from "@/components/PublicAnalytics";
 
 export const metadata: Metadata = {
-  title: "Lumenless - Building The Future Of Privacy On Solana",
-  description: "Join the waitlist for Lumenless. Building the future of privacy on Solana.",
+  title: "Lumenless — Your voice. Our timeline.",
+  description: "Buy a tweet or thread on @lumenless. Pay with LUMEN or SOL, submit your content, and get published after approval.",
   icons: {
     icon: [
       { url: '/favicon.svg', type: 'image/svg+xml' },
@@ -12,19 +13,18 @@ export const metadata: Metadata = {
     apple: '/icon.svg',
   },
   openGraph: {
-    title: "Lumenless - Building The Future Of Privacy On Solana",
-    description: "Join the waitlist for Lumenless. Building the future of privacy on Solana.",
+    title: "Lumenless — Your voice. Our timeline.",
+    description: "Buy a tweet or thread on @lumenless with LUMEN or SOL.",
     images: ['/logo.svg'],
   },
   twitter: {
     card: 'summary_large_image',
-    title: "Lumenless - Building The Future Of Privacy On Solana",
-    description: "Join the waitlist for Lumenless. Building the future of privacy on Solana.",
+    title: "Lumenless — Your voice. Our timeline.",
+    description: "Buy a tweet or thread on @lumenless with LUMEN or SOL.",
     images: ['/logo.svg'],
   },
 };
 
-const GA_MEASUREMENT_ID = 'G-7JXQNJFHX6';
 
 export default function RootLayout({
   children,
@@ -33,22 +33,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head>
-        {/* Google tag (gtag.js) - loads on every page */}
-        <script async src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`} />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              window.dataLayer = window.dataLayer || [];
-              function gtag(){dataLayer.push(arguments);}
-              gtag('js', new Date());
-              gtag('config', '${GA_MEASUREMENT_ID}');
-            `,
-          }}
-        />
-      </head>
       <body className="antialiased">
         {children}
+        <PublicAnalytics />
       </body>
     </html>
   );

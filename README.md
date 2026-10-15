@@ -1,3 +1,22 @@
+# Lumenless — paid tweets and threads
+
+The current web product lets users submit text, photos or an MP4 video for publication on **@lumenless**. A tweet costs **1M LUMEN**; a thread of up to five tweets costs **3M LUMEN**. SOL checkout swaps through Jupiter before paying in LUMEN. Paid orders enter the admin queue, trigger a Telegram notification, and publish through X API after approval. Administrators can reject with or without a LUMEN refund. Email and Telegram contacts are optional.
+
+Run the Next.js application from `web/`. See [tweet order setup](web/TWEET_ORDERS_SETUP.md) for the database bootstrap, environment variables, X connection and payment recovery. The implementation is local; live checkout requires integration credentials and verification before deployment.
+
+```sh
+cd web
+npm install
+npm run dev
+npm run test:tweet-orders
+```
+
+The `mobile/` application and legacy privacy integrations have not been migrated. The mobile app currently contains Expo. The legacy `/sns` route is disabled because it referenced public private-key environment variables.
+
+---
+
+The documentation below describes the previous privacy product.
+
 # Light 2.0 🔒
 
 Building The Future Of Privacy On Solana. Private payments. Private trading. Private [redacted].

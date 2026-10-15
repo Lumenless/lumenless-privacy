@@ -48,7 +48,7 @@ export default function PrivacyPolicyPage() {
               Privacy Policy
             </span>
           </h1>
-          <p className="text-muted-foreground">Last updated: February 17, 2026</p>
+          <p className="text-muted-foreground">Last updated: October 14, 2026</p>
         </motion.div>
 
         <motion.div
@@ -57,6 +57,17 @@ export default function PrivacyPolicyPage() {
           transition={{ duration: 0.6, delay: 0.1 }}
           className="prose prose-gray max-w-none space-y-8 text-foreground"
         >
+          <section>
+            <h2 className="text-2xl font-semibold mb-4">Tweet publication orders</h2>
+            <p className="text-muted-foreground leading-relaxed">
+              For paid tweet and thread orders, we store your submitted text and attachments, wallet address,
+              payment and refund transaction signatures, order status, and any optional email or Telegram contact
+              you provide. Our moderators use this information to review and publish your content and discuss changes.
+              Attachments are stored privately before publication; approved content is sent to X and becomes public
+              on @lumenless. Solana transactions are public. Order identifiers and moderation alerts are sent to our
+              administrator through Telegram. We do not request your wallet private key.
+            </p>
+          </section>
           <section>
             <h2 className="text-2xl font-semibold mb-4">Introduction</h2>
             <p className="text-muted-foreground leading-relaxed">
