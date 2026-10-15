@@ -54,3 +54,11 @@ test('RPC errors fail promptly without rate-limit retries or endpoint secrets',a
  global.fetch=async()=>{throw Error('network error https://example.invalid/private-key');};await assert.rejects(payments.mainnetRpc(),error=>error.status===503&&!error.message.includes('private-key'));
  }finally{global.fetch=oldFetch;if(oldRpc===undefined)delete process.env.SOLANA_MAINNET_RPC_URL;else process.env.SOLANA_MAINNET_RPC_URL=oldRpc;}
 });
+test('recovered payment inspection validates signatures without database writes or broadcast',async()=>{
+ const {NextRequest}=require('next/server');const route=require('../src/app/api/tweet-orders/[id]/route.ts');const signer=Keypair.generate();
+ const tx=new Transaction({feePayer:signer.publicKey,recentBlockhash:Keypair.generate().publicKey.toBase58()}).add(SystemProgram.transfer({fromPubkey:signer.publicKey,toPubkey:Keypair.generate().publicKey,lamports:1000000}));tx.sign(signer);
+ const row={status:'awaiting_payment',payment_message_hash:server.hash(tx.serializeMessage().toString('base64'))};const oldOrder=server.order,oldDb=server.db;let writes=0;
+ server.order=async()=>row;server.db=()=>{writes++;throw Error('Inspection must not write');};
+ const inspect=async()=>route.POST(new NextRequest('http://localhost/api/tweet-orders/test',{method:'POST',headers:{origin:'http://localhost'},body:JSON.stringify({action:'inspect-payment',signedTransaction:tx.serialize().toString('base64')})}),{params:Promise.resolve({id:'test'})});
+ try{assert.equal((await inspect()).status,200);row.payment_message_hash='different';const rejected=await inspect();assert.equal(rejected.status,400);assert.match((await rejected.json()).error,/changed the prepared/);assert.equal(writes,0);}finally{server.order=oldOrder;server.db=oldDb;}
+});

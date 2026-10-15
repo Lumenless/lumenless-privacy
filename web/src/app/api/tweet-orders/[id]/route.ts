@@ -12,6 +12,15 @@ export async function GET(request: NextRequest, context: Context) {
   try { return NextResponse.json(await withMedia(await order((await context.params).id, request))); }
   catch (error) { return failure(error); }
 }
+function assertPreparedPayment(value: import('@/lib/tweet-orders/model').TweetOrder, transaction: Transaction) {
+      if (!value.payment_message_hash || hash(transaction.serializeMessage().toString('base64')) !== value.payment_message_hash) {
+        const withoutBudget = new Transaction({feePayer:transaction.feePayer,recentBlockhash:transaction.recentBlockhash});
+        withoutBudget.add(...transaction.instructions.filter(instruction => instruction.programId.toBase58() !== 'ComputeBudget111111111111111111111111111111'));
+        const addedBudget = transaction.instructions.length !== withoutBudget.instructions.length && hash(withoutBudget.serializeMessage().toString('base64')) === value.payment_message_hash;
+        throw new ApiError(addedBudget ? 'Your wallet added priority-fee instructions to the payment. This transaction was not broadcast. Keep this order and contact support.' : 'The wallet changed the prepared payment message. This transaction was not broadcast. Keep this order and contact support.');
+      }
+      if (!transaction.verifySignatures()) throw new ApiError('The wallet returned an invalid payment signature. This transaction was not broadcast.');
+}
 export async function POST(request: NextRequest, context: Context) {
   try {
     checkOrigin(request);
@@ -29,6 +38,10 @@ export async function POST(request: NextRequest, context: Context) {
       return NextResponse.json(await withMedia(data));
     }
     if (value.status !== 'awaiting_payment') throw new ApiError('This order is already paid.', 409);
+    if (body.action === 'inspect-payment' && typeof body.signedTransaction === 'string' && body.signedTransaction.length <= 4000) {
+      assertPreparedPayment(value, Transaction.from(Buffer.from(body.signedTransaction, 'base64')));
+      return NextResponse.json({ ok: true }); // Read-only: never reserve or broadcast a transaction.
+    }
     if (body.action === 'payment-options') return NextResponse.json(await paymentOptions(value));
     if (body.action === 'reset-payment') { await guardPending(value); return NextResponse.json({ ok: true }); }
     if (body.action === 'prepare') {
@@ -42,13 +55,7 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (body.action === 'broadcast' && typeof body.signedTransaction === 'string' && body.signedTransaction.length <= 4000) {
       const transaction = Transaction.from(Buffer.from(body.signedTransaction, 'base64'));
-      if (!value.payment_message_hash || hash(transaction.serializeMessage().toString('base64')) !== value.payment_message_hash) {
-        const withoutBudget = new Transaction({feePayer:transaction.feePayer,recentBlockhash:transaction.recentBlockhash});
-        withoutBudget.add(...transaction.instructions.filter(instruction => instruction.programId.toBase58() !== 'ComputeBudget111111111111111111111111111111'));
-        const addedBudget = transaction.instructions.length !== withoutBudget.instructions.length && hash(withoutBudget.serializeMessage().toString('base64')) === value.payment_message_hash;
-        throw new ApiError(addedBudget ? 'Your wallet added priority-fee instructions to the payment. This transaction was not broadcast. Keep this order and contact support.' : 'The wallet changed the prepared payment message. This transaction was not broadcast. Keep this order and contact support.');
-      }
-      if (!transaction.verifySignatures()) throw new ApiError('The wallet returned an invalid payment signature. This transaction was not broadcast.');
+      assertPreparedPayment(value, transaction);
       const signature = await reserveAndBroadcast(value, transaction);
       return NextResponse.json({ signature });
     }

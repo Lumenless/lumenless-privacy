@@ -40,12 +40,12 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   function remember(value: Recovery) { setSaved(value); localStorage.setItem(storage, JSON.stringify(value)); }
   async function load(value: Recovery) {
     const result = await jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) });
-    setOrder(result); if (result.payment_signed_signature && !value.signature) remember({ ...value, signature: result.payment_signed_signature }); return result as TweetOrder;
+    setOrder(result); if (value.raw && !result.payment_signature) action(value, { action: 'inspect-payment', signedTransaction: value.raw }).catch((err: Error) => setError(err.message)); if (result.payment_signed_signature && !value.signature) remember({ ...value, signature: result.payment_signed_signature }); return result as TweetOrder;
   }
   useEffect(() => {
     jsonRequest(`/api/tweet-orders/config?username=${encodeURIComponent(username)}`).then(setConfig).catch(() => setError('Could not check payment availability. Reload this page.'));
     const previous = localStorage.getItem(storage) || (username === 'lumenless' ? localStorage.getItem('lumenless-tweet-order') : null);
-    if (previous) { try { const value = JSON.parse(previous); setSaved(value); jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) }).then(result => { setOrder(result); if (result.payment_signed_signature && !value.signature) { const recovered = { ...value, signature: result.payment_signed_signature }; setSaved(recovered); localStorage.setItem(storage, JSON.stringify(recovered)); } }).catch((err: Error) => setError(err.message)); } catch { localStorage.removeItem(storage); } }
+    if (previous) { try { const value = JSON.parse(previous); setSaved(value); jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) }).then(result => { setOrder(result); if (value.raw && !result.payment_signature) action(value, { action: 'inspect-payment', signedTransaction: value.raw }).catch((err: Error) => setError(err.message)); if (result.payment_signed_signature && !value.signature) { const recovered = { ...value, signature: result.payment_signed_signature }; setSaved(recovered); localStorage.setItem(storage, JSON.stringify(recovered)); } }).catch((err: Error) => setError(err.message)); } catch { localStorage.removeItem(storage); } }
   }, [storage, username]);
   async function run(label: string, task: () => Promise<void>) {
     setBusy(label); setError(''); try { await task(); } catch (err) { if (!(err instanceof Error && err.message === 'Wallet connection cancelled.')) setError(err instanceof Error ? err.message : 'Something went wrong. Retry.'); } finally { setBusy(''); }
