@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 import { Check, Copy } from 'lucide-react';
 import parseTweet from 'twitter-text/dist/parseTweet';
 import { draftSchema, signingMessage, TweetOrder } from '@/lib/tweet-orders/model';
-import { WALLET_NAMES, fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
+import { WALLET_NAMES, authorizeOrderMessage, fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
 import { DEFAULT_BILLING, type Billing, orderTerms, termsFor, displayAmount } from '@/lib/tweet-orders/billing';
 import { Button } from '@/components/ui/button';
 
@@ -88,12 +88,15 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
       tweets: posts.map(post => ({ text: post.text, media: post.files.map(file => ({ name: file.name, type: file.type, size: file.size })) })), email, telegram, acceptedTerms: terms });
     if (!parsed.success) throw new Error(parsed.error.issues[0].message);
     const draft = parsed.data; const timestamp = Date.now(); const nonce = crypto.randomUUID();
-    const signed = await provider.signMessage(new TextEncoder().encode(signingMessage(draft, timestamp, nonce)), 'utf8');
+    setBusy('Open your wallet and sign the order message (no payment)…');
+    const signed = await authorizeOrderMessage(provider, new TextEncoder().encode(signingMessage(draft, timestamp, nonce)));
+    setBusy('Saving your content…');
     const signature = bs58.encode(signed instanceof Uint8Array ? signed : signed.signature);
     const value = await jsonRequest('/api/tweet-orders', { method: 'POST', body: JSON.stringify({ draft, timestamp, nonce, signature }) });
     const recovery = { id: value.id, token: value.token }; remember(recovery);
     let index = 0;
     for (const post of posts) for (const file of post.files) {
+      setBusy(`Uploading ${file.name}…`);
       const response = await fetch(value.uploads[index++].url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
       if (!response.ok) throw new Error(`Could not upload ${file.name}. Discard the unpaid order and retry.`);
     }
@@ -105,6 +108,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
     const provider = await connect(); const current = await load(value);
     if (provider.publicKey!.toBase58() !== current.wallet) throw new Error('Connect the wallet that created this order.');
     const prepared = await action(value, { action: 'prepare' });
+    setBusy('Open your wallet to review and sign the payment…');
     const signed = await provider.signTransaction(Transaction.from(fromBase64(prepared.transaction)));
     if (!signed.signature) throw new Error('Wallet returned no payment signature.');
     const pending = { ...value, signature: bs58.encode(signed.signature), raw: toBase64(signed.serialize()) }; remember(pending);
@@ -140,7 +144,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
           {submitted ? <div className="space-y-5"><p className="text-sm font-medium text-primary">ORDER RECEIVED</p><h2 className="text-2xl font-semibold capitalize">{order.status.replaceAll('_', ' ')}</h2><p className="text-muted-foreground">Your payment is confirmed. Your content is in our moderation workflow.</p>{order.review_note && <p className="rounded-xl bg-muted p-4">{order.review_note}</p>}{order.published_url && <a href={order.published_url} target="_blank" rel="noreferrer" className="text-primary underline">View your post on X ↗</a>}<p className="break-all text-sm text-muted-foreground">Order {order.id}</p><div className="flex flex-wrap gap-3"><Button disabled={!!busy} onClick={() => run('Refreshing…', async () => { await load(saved!); })}>Refresh status</Button><Link href={`/orders?id=${order.id}`} className="inline-flex min-h-10 items-center rounded-xl border border-border px-4 text-sm font-medium text-primary">Track order</Link><Button variant="outline" onClick={discard}>Create another order</Button></div></div> : <>
             <div className="mb-7 flex items-center justify-between"><h2 className="text-xl font-semibold">Create your post</h2><span className="text-sm text-muted-foreground">01 / Compose</span></div>
             <fieldset disabled={!!saved || !!busy} className="mb-6 grid grid-cols-2 gap-3"><legend className="sr-only">Post format</legend>{(['tweet', 'thread'] as const).map(value => <label key={value} className={`cursor-pointer rounded-xl border p-4 ${kind === value ? 'border-primary bg-primary/5' : 'border-border'}`}><input type="radio" name="kind" checked={kind === value} onChange={() => { setKind(value); setPosts(value === 'tweet' ? [posts[0]] : posts.length < 2 ? [...posts, { text: '', files: [] }] : posts); }} className="mr-2" /><span className="font-medium">{value === 'tweet' ? 'Single tweet' : 'Thread'}</span><p className="mt-1 text-sm text-muted-foreground">{config?.billing ? displayAmount(termsFor(config.billing, value).amount) + ' ' + config.billing.payment_symbol : 'Loading price…'}</p></label>)}</fieldset>
-            {saved && order ? <div className="mb-6 space-y-4">{order.tweets.map((post, index) => <div key={index} className="rounded-xl border border-border p-4"><p className="mb-2 text-xs text-muted-foreground">Tweet {index + 1}</p><p className="whitespace-pre-wrap break-words">{post.text}</p>{post.media.map(file => <p key={file.path} className="mt-2 text-xs text-muted-foreground">Attachment: {file.name}</p>)}</div>)}</div> : <form onSubmit={event => { event.preventDefault(); run('Saving your content…', create); }}>
+            {saved && order ? <div className="mb-6 space-y-4">{order.tweets.map((post, index) => <div key={index} className="rounded-xl border border-border p-4"><p className="mb-2 text-xs text-muted-foreground">Tweet {index + 1}</p><p className="whitespace-pre-wrap break-words">{post.text}</p>{post.media.map(file => <p key={file.path} className="mt-2 text-xs text-muted-foreground">Attachment: {file.name}</p>)}</div>)}</div> : <form onSubmit={event => { event.preventDefault(); run('Preparing your order…', create); }}>
               <fieldset disabled={!!saved || !!busy} className="space-y-6">
                 {posts.map((post, index) => <div key={index} className="space-y-3"><div className="flex items-center justify-between"><label htmlFor={`tweet-${index}`} className="text-sm font-medium">Tweet {index + 1}{kind === 'thread' ? ` of ${posts.length}` : ''}</label>{kind === 'thread' && posts.length > 2 && <Button variant="outline" type="button" aria-label={`Remove tweet ${index + 1}`} onClick={() => setPosts(posts.filter((_, i) => i !== index))}>Remove</Button>}</div><textarea id={`tweet-${index}`} value={post.text} maxLength={4000} rows={5} aria-invalid={!!post.text && !parseTweet(post.text).valid} className={`${field} resize-y`} placeholder="What should the timeline know?" onChange={event => setPosts(posts.map((item, i) => i === index ? { ...item, text: event.target.value } : item))} />{post.text && !parseTweet(post.text).valid && <p className="text-sm text-destructive">Use at most 280 weighted characters.</p>}<MediaPreview files={post.files} /><div className="flex items-center justify-between"><label htmlFor={`media-${index}`} className="text-sm text-primary">Photos or video</label><span className="text-xs tabular-nums text-muted-foreground">{parseTweet(post.text).weightedLength}/280</span></div><input id={`media-${index}`} type="file" accept="image/jpeg,image/png,image/webp,video/mp4" multiple className="min-h-10 w-full text-sm" onChange={event => setPosts(posts.map((item, i) => i === index ? { ...item, files: Array.from(event.target.files || []) } : item))} /><p className="text-xs text-muted-foreground">Up to 4 images (10 MB each) or 1 MP4 video (50 MB).</p></div>)}
                 {kind === 'thread' && posts.length < 5 && <Button type="button" variant="outline" onClick={() => setPosts([...posts, { text: '', files: [] }])}>+ Add tweet</Button>}

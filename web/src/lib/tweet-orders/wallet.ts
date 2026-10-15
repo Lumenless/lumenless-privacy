@@ -45,3 +45,15 @@ export async function jsonRequest(url: string, init: RequestInit = {}) {
   if (!response.ok) throw new Error(result.error || 'Request failed. Please retry.');
   return result;
 }
+
+// A late message signature must never resume order creation after the UI timed out.
+// This wraps message authorization only; payment transactions keep their recovery flow.
+export async function authorizeOrderMessage(provider: WalletProvider, message: Uint8Array, timeoutMs = 60_000) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      provider.signMessage(message, 'utf8'),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Wallet message signing timed out. Open your wallet extension and reject the pending request before trying again. No payment was initiated.')), timeoutMs); }),
+    ]);
+  } finally { if (timer !== undefined) clearTimeout(timer); }
+}

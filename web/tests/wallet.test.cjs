@@ -34,3 +34,17 @@ test('Jupiter exposes its current public key to checkout after connection and cl
   adapter.publicKey = null;
   assert.equal(provider.publicKey, undefined);
 });
+
+test('message authorization times out without allowing a late signature to resume checkout', async () => {
+  const module = {exports:{}};
+  const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/lib/tweet-orders/wallet.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+  vm.runInNewContext(source,{module,exports:module.exports,require,setTimeout,clearTimeout});
+  const authorize = module.exports.authorizeOrderMessage;
+  let resolveSignature,continued=0;
+  const provider={signMessage:()=>new Promise(resolve=>{resolveSignature=resolve;})};
+  const pending=authorize(provider,new Uint8Array([1]),10).then(()=>{continued++;});
+  await assert.rejects(pending,/No payment was initiated/);
+  resolveSignature(new Uint8Array([2]));await new Promise(resolve=>setTimeout(resolve,0));assert.equal(continued,0);
+  const signature=new Uint8Array([3]);assert.equal(await authorize({signMessage:async()=>signature},new Uint8Array([1]),100),signature);
+  await assert.rejects(authorize({signMessage:async()=>{throw Error('User rejected');}},new Uint8Array([1]),100),/User rejected/);
+});
