@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Transaction, VersionedTransaction } from '@solana/web3.js';
 import { ApiError, checkOrigin, db, failure, hash, notify, order, withMedia } from '@/lib/tweet-orders/server';
 import { buildTransfer, guardPending, paymentOptions, reserveAndBroadcast, verifyTransfer } from '@/lib/tweet-orders/payments';
+import { assertPreparedMessage } from '@/lib/tweet-orders/prepared-message';
 import { validateMedia } from '@/lib/tweet-orders/media';
 import { jupiter, swapOrder } from '@/lib/tweet-orders/jupiter';
 
@@ -13,12 +14,7 @@ export async function GET(request: NextRequest, context: Context) {
   catch (error) { return failure(error); }
 }
 function assertPreparedPayment(value: import('@/lib/tweet-orders/model').TweetOrder, transaction: Transaction) {
-      if (!value.payment_message_hash || hash(transaction.serializeMessage().toString('base64')) !== value.payment_message_hash) {
-        const withoutBudget = new Transaction({feePayer:transaction.feePayer,recentBlockhash:transaction.recentBlockhash});
-        withoutBudget.add(...transaction.instructions.filter(instruction => instruction.programId.toBase58() !== 'ComputeBudget111111111111111111111111111111'));
-        const addedBudget = transaction.instructions.length !== withoutBudget.instructions.length && hash(withoutBudget.serializeMessage().toString('base64')) === value.payment_message_hash;
-        throw new ApiError(addedBudget ? 'Your wallet added priority-fee instructions to the payment. This transaction was not broadcast. Keep this order and contact support.' : 'The wallet changed the prepared payment message. This transaction was not broadcast. Keep this order and contact support.');
-      }
+      assertPreparedMessage(transaction, value.payment_message_hash);
       if (!transaction.verifySignatures()) throw new ApiError('The wallet returned an invalid payment signature. This transaction was not broadcast.');
 }
 export async function POST(request: NextRequest, context: Context) {
@@ -40,13 +36,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (value.status !== 'awaiting_payment') throw new ApiError('This order is already paid.', 409);
     if (body.action === 'inspect-payment' && typeof body.signedTransaction === 'string' && body.signedTransaction.length <= 4000) {
       const transaction = Transaction.from(Buffer.from(body.signedTransaction, 'base64'));
-      try { assertPreparedPayment(value, transaction); return NextResponse.json({ ok: true }); }
-      catch (error) {
-        if (!(error instanceof ApiError)) throw error;
-        // Only the authenticated order owner receives this unsigned, public transaction message.
-        // No signatures, order bearer tokens, X tokens or RPC URLs enter the diagnostic.
-        return NextResponse.json({ok:false,error:error.message,diagnostic:{message:transaction.serializeMessage().toString('base64'),expectedHash:value.payment_message_hash,signaturesValid:transaction.verifySignatures()}});
-      }
+      assertPreparedPayment(value, transaction);
+      return NextResponse.json({ok:true});
     }
     if (body.action === 'payment-options') return NextResponse.json(await paymentOptions(value));
     if (body.action === 'reset-payment') { await guardPending(value); return NextResponse.json({ ok: true }); }

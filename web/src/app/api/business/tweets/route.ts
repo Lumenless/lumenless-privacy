@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Transaction } from '@solana/web3.js';
 import { ApiError, checkOrigin, db, failure, hash, notify, order, requireAdmin, withMedia } from '@/lib/tweet-orders/server';
 import { buildTransfer, guardPending, reserveAndBroadcast, verifyTransfer } from '@/lib/tweet-orders/payments';
+import { assertPreparedMessage } from '@/lib/tweet-orders/prepared-message';
 import { publish, reconcile } from '@/lib/tweet-orders/x';
 
 import { prepareSettlement, broadcastSettlement, verifySettlement, resetSettlement } from '@/lib/tweet-orders/escrow';
@@ -82,7 +83,8 @@ export async function POST(request: NextRequest) {
       if (value.status !== 'refund_pending' || typeof body.signedTransaction !== 'string' || body.signedTransaction.length > 4000)
         throw new ApiError('Invalid refund request.');
       const transaction = Transaction.from(Buffer.from(body.signedTransaction, 'base64'));
-      if (!value.refund_message_hash || hash(transaction.serializeMessage().toString('base64')) !== value.refund_message_hash || !transaction.verifySignatures())
+      assertPreparedMessage(transaction, value.refund_message_hash);
+      if (!transaction.verifySignatures())
         throw new ApiError('Refund transaction changed. Prepare it again.');
       return NextResponse.json({ signature: await reserveAndBroadcast(value, transaction, true) });
     } else if (body.action === 'refund-verify') {

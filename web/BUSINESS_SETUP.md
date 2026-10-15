@@ -37,3 +37,9 @@ The entire thread must publish successfully before published_at starts the 24-ho
 Keep a secure backup of ESCROW_ENCRYPTION_KEY: losing it makes escrow funds inaccessible. Escrow private keys use AES-256-GCM with fresh nonces and account-bound authenticated data, independently of X token encryption. They are never returned by public/settings/order APIs. A signed settlement is reserved in the database before broadcast. Retries resend the same transaction; a missing RPC history result never permits another payment automatically. Only a definitively finalized failed transaction can be reset; uncertain outcomes require reconciliation.
 
 Validation uses mocked RPC/X calls and test keypairs; it does not transfer real funds. A small live end-to-end payment/refund/payout remains necessary before broad rollout.
+
+## Phantom transaction guards
+
+The message validator accepts only wallet-added ComputeBudget unit-limit/unit-price instructions (priority fee capped at 0.0001 SOL) and Lighthouse AssertAccountInfoMulti (opcode 6) checks against accounts already used by the prepared transaction. It compares the remaining serialized message to the server hash, including the original blockhash, fee payer, account permissions, amount, recipient and memo. The original signed transaction, including its guards, is broadcast unchanged. Lighthouse memory writes/closes, unfamiliar programs, other assertion types and modified core instructions remain rejected. This applies to checkout, legacy refunds and escrow settlements. Regression tests include the captured unsigned Phantom message; no private keys or signatures are fixtures.
+
+References: https://phantom.com/learn/blog/anti-spoofing-security and https://github.com/Jac0xb/lighthouse/blob/main/programs/lighthouse/src/instruction.rs

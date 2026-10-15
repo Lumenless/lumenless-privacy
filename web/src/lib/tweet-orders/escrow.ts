@@ -6,6 +6,7 @@ import { mainnetRpc, mintInfo, TREASURY } from './payments';
 import { orderTerms, orderAtomic } from './billing';
 import { TweetOrder } from './model';
 import { openEscrow } from '../business/escrow-keys';
+import { assertPreparedMessage } from './prepared-message';
 import { verifyPublishedPosts } from './x';
 const MEMO=new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 export function settlementAmounts(amount:bigint,kind:'payout'|'refund'){const fee=kind==='refund'?BigInt(0):amount*BigInt(1000)/BigInt(10000);return {fee,recipient:amount-fee};}
@@ -38,7 +39,8 @@ export async function broadcastSettlement(value:TweetOrder,raw:string){
   const kind=value.settlement_kind;if(!kind)throw new ApiError('Prepare the escrow transaction first.');requireSettlement(value,kind);
   if(value.settlement_signature){if(!value.settlement_raw)throw new ApiError('Settlement recovery is unavailable.',503);return {signature:await(await mainnetRpc()).sendRawTransaction(Buffer.from(value.settlement_raw,'base64'),{maxRetries:3})};}
   if(raw.length>10000)throw new ApiError('Settlement transaction is too large.');const transaction=Transaction.from(Buffer.from(raw,'base64'));
-  if(hash(transaction.serializeMessage().toString('base64'))!==value.settlement_message_hash||transaction.feePayer?.toBase58()!==value.settlement_recipient||!transaction.signatures.some(s=>s.publicKey.toBase58()===value.settlement_recipient&&!!s.signature)||!transaction.verifySignatures(false))throw new ApiError('Settlement changed or the receiving wallet did not sign it.');
+  assertPreparedMessage(transaction,value.settlement_message_hash);
+  if(transaction.feePayer?.toBase58()!==value.settlement_recipient||!transaction.signatures.some(s=>s.publicKey.toBase58()===value.settlement_recipient&&!!s.signature)||!transaction.verifySignatures(false))throw new ApiError('Settlement changed or the receiving wallet did not sign it.');
   const owner=await account(value);if(owner.payout_wallet!==value.settlement_recipient)throw new ApiError('Receiving wallet changed. Prepare a new transaction.',409);
   if(kind==='payout')await verifyPublishedPosts(value);
   const connection=await mainnetRpc();if(!value.settlement_last_valid_height||await connection.getBlockHeight('finalized')>value.settlement_last_valid_height)throw new ApiError('Settlement expired. Prepare it again.',409);
