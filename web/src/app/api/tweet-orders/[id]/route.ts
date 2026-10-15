@@ -39,8 +39,14 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (value.status !== 'awaiting_payment') throw new ApiError('This order is already paid.', 409);
     if (body.action === 'inspect-payment' && typeof body.signedTransaction === 'string' && body.signedTransaction.length <= 4000) {
-      assertPreparedPayment(value, Transaction.from(Buffer.from(body.signedTransaction, 'base64')));
-      return NextResponse.json({ ok: true }); // Read-only: never reserve or broadcast a transaction.
+      const transaction = Transaction.from(Buffer.from(body.signedTransaction, 'base64'));
+      try { assertPreparedPayment(value, transaction); return NextResponse.json({ ok: true }); }
+      catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        // Only the authenticated order owner receives this unsigned, public transaction message.
+        // No signatures, order bearer tokens, X tokens or RPC URLs enter the diagnostic.
+        return NextResponse.json({ok:false,error:error.message,diagnostic:{message:transaction.serializeMessage().toString('base64'),expectedHash:value.payment_message_hash,signaturesValid:transaction.verifySignatures()}});
+      }
     }
     if (body.action === 'payment-options') return NextResponse.json(await paymentOptions(value));
     if (body.action === 'reset-payment') { await guardPending(value); return NextResponse.json({ ok: true }); }
