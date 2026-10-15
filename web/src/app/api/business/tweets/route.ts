@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     if (typeof body.action !== 'string') throw new ApiError('Action is required.');
     if (typeof body.id !== 'string') throw new ApiError('Order ID is required.');
     const value = await order(body.id, request, true);
+    if (value.refund_reason === 'review_timeout' && ['escrow-prepare','escrow-broadcast','escrow-reset'].includes(body.action)) throw new ApiError('Only the paying wallet can manage this timeout refund.',403);
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
     const client = db();
     if (body.action === 'escrow-prepare') {

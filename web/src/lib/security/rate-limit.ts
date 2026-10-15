@@ -5,6 +5,7 @@ export function requestLimit(path: string, method: string): Limit | null {
   if (path === '/api/business/x/start') return { name: 'oauth-start', limit: 10, seconds: 600 };
   if (path === '/api/business/x/callback') return { name: 'oauth-callback', limit: 20, seconds: 600 };
   if (path === '/api/tweet-orders' && method === 'POST') return { name: 'create-order', limit: 20, seconds: 600 };
+  if (path.startsWith('/api/order-refunds/')) return { name:'buyer-refund-api',limit:60,seconds:60 };
   if (path.startsWith('/api/order-status/')) return { name: 'order-status', limit: 60, seconds: 60 };
   if (path.startsWith('/api/business/')) return { name: method === 'GET' ? 'business-read' : 'business-write', limit: method === 'GET' ? 120 : 60, seconds: 60 };
   if (path.startsWith('/api/tweet-orders/')) return { name: 'checkout', limit: 180, seconds: 60 };

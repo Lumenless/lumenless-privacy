@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, context: Context) {
       if (value.status !== 'awaiting_payment') throw new ApiError('This order was already paid.', 409);
       await verifyTransfer(value, body.signature);
       await validateMedia(value);
-      const { data, error } = await db().from('tweet_orders').update({ status: 'pending_review', payment_signature: body.signature, updated_at: new Date().toISOString() })
+      const { data, error } = await db().from('tweet_orders').update({ status: 'pending_review', paid_at: new Date().toISOString(), payment_signature: body.signature, updated_at: new Date().toISOString() })
         .eq('id', value.id).eq('status', 'awaiting_payment').select().maybeSingle();
       if (error || !data) throw new ApiError('Could not confirm order. Retry with the same signature.', 409);
       try { await notify(data); } catch { /* Durable pending notification remains visible to admin and cron. */ }

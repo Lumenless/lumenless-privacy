@@ -71,3 +71,51 @@ test('the captured Phantom guards preserve the exact payment and reject financia
  for(const change of mutations){const tx=fresh();change(tx);assert.throws(()=>assertPreparedMessage(tx,expected));}
  const extra=fresh();extra.add(new TransactionInstruction({programId:Keypair.generate().publicKey,keys:[],data:Buffer.from([6])}));assert.throws(()=>assertPreparedMessage(extra,expected));
 });
+
+const review=require('../src/lib/tweet-orders/review-refund.ts'),refundModel=require('../src/lib/tweet-orders/refund-model.ts');
+test('timeout requires confirmed escrow payment, full 72 hours and no moderation or settlement',()=>{
+ const now=Date.now(),row={escrow_account_id:'777',payment_signature:'paid',paid_at:new Date(now-refundModel.REVIEW_TIMEOUT_MS).toISOString(),status:'pending_review',published_ids:[]};
+ assert.equal(review.canRequestReviewRefund(row,now-1),false);assert.equal(review.canRequestReviewRefund(row,now),true);
+ for(const patch of [{paid_at:null},{payment_signature:null},{escrow_account_id:null},{paid_at:'invalid'},{accepted_at:'accepted'},{published_ids:['post']},{settled_at:'settled'},{settlement_signature:'signed'},...['awaiting_payment','approved','published','publish_failed','rejected','refund_pending','refunded'].map(status=>({status}))])assert.equal(review.canRequestReviewRefund({...row,...patch},now),false,JSON.stringify(patch));
+});
+test('refund authorization binds order, wallet, nonce and time and expires after five minutes',()=>{
+ const nacl=require('tweetnacl'),bs58=require('bs58').default,buyer=Keypair.generate(),id='order',now=Date.now(),proof={wallet:buyer.publicKey.toBase58(),timestamp:now,nonce:'nonce'};
+ proof.signature=bs58.encode(nacl.sign.detached(Buffer.from(refundModel.refundAuthorizationMessage(id,proof)),buyer.secretKey));review.assertRefundAuthorization(id,proof,now);
+ for(const [order,p,when] of [['other',proof,now],[id,{...proof,nonce:'other'},now],[id,{...proof,wallet:Keypair.generate().publicKey.toBase58()},now],[id,proof,now+300001],[id,proof,now-300001]])assert.throws(()=>review.assertRefundAuthorization(order,p,when));
+});
+test('concurrent moderation decision prevents a refund claim',async()=>{
+ const original=server.db;let calls=0;server.db=()=>({rpc:async(name,args)=>{calls++;assert.equal(name,'claim_review_timeout_refund');assert.equal(args.p_wallet,'buyer');return {data:[]};}});
+ try{await assert.rejects(review.claimReviewRefund({id:'order',wallet:'buyer',status:'pending_review',paid_at:new Date(Date.now()-refundModel.REVIEW_TIMEOUT_MS-1000).toISOString(),payment_signature:'paid',escrow_account_id:'777',published_ids:[]}),error=>error.status===409);assert.equal(calls,1);}finally{server.db=original;}
+});
+test('timeout refund checks recorded deadline and uses buyer as fee payer',()=>{
+ const now=Date.now(),row={escrow_account_id:'777',status:'refund_pending',refund_reason:'review_timeout',paid_at:new Date(now-refundModel.REVIEW_TIMEOUT_MS).toISOString(),refund_requested_at:new Date(now).toISOString(),wallet:Keypair.generate().publicKey.toBase58()};
+ escrow.requireSettlement(row,'refund',now);assert.equal(escrow.settlementPayer(row,'refund',{payout_wallet:'owner'}),row.wallet);assert.equal(escrow.settlementPayer({...row,refund_reason:null},'refund',{payout_wallet:'owner'}),'owner');
+ for(const patch of [{refund_requested_at:'invalid'},{refund_requested_at:null},{refund_requested_at:new Date(now-1).toISOString()},{refund_requested_at:new Date(now+1).toISOString()},{paid_at:new Date(now-refundModel.REVIEW_TIMEOUT_MS+1).toISOString()}])assert.throws(()=>escrow.requireSettlement({...row,...patch},'refund',now));
+});
+test('refund endpoint rejects foreign origins, forged proofs and the wrong buyer before settlement',async()=>{
+ const {NextRequest}=require('next/server'),nacl=require('tweetnacl'),bs58=require('bs58').default;
+ require('../src/lib/security/rate-limit.ts').consumeLimit=async()=>null;
+ const route=require('../src/app/api/order-refunds/[id]/route.ts'),id='41047fe6-a981-4d9f-8f06-1c11037d803c',buyer=Keypair.generate(),authorization={wallet:buyer.publicKey.toBase58(),timestamp:Date.now(),nonce:require('node:crypto').randomUUID()};authorization.signature=bs58.encode(nacl.sign.detached(Buffer.from(refundModel.refundAuthorizationMessage(id,authorization)),buyer.secretKey));
+ const original=server.db;let reads=0;server.db=()=>({from(){reads++;return {select(){return this},eq(){return this},async maybeSingle(){return {data:{wallet:'different-buyer'}}}}}});
+ const request=(origin,auth)=>route.POST(new NextRequest('http://localhost/api/order-refunds/'+id,{method:'POST',headers:{origin},body:JSON.stringify({action:'prepare',authorization:auth})}),{params:Promise.resolve({id})});
+ try{assert.equal((await request('https://evil.example',authorization)).status,403);assert.equal((await request('http://localhost',{...authorization,signature:'forged'})).status,401);assert.equal(reads,0);const response=await request('http://localhost',authorization);assert.equal(response.status,403);assert.equal(reads,1);assert.equal(response.headers.get('cache-control'),'private, no-store');}finally{server.db=original;}
+});
+test('timeout refund transfers 100% to buyer, requires buyer signature and reserves before broadcast',async()=>{
+ const buyer=Keypair.generate(),created=keys.createEscrow('777'),now=Date.now(),account={x_user_id:'777',payout_wallet:null,escrow_address:created.address,escrow_secret:created.secret};
+ const row={id:'refund-order',wallet:buyer.publicKey.toBase58(),escrow_account_id:'777',status:'refund_pending',refund_reason:'review_timeout',paid_at:new Date(now-refundModel.REVIEW_TIMEOUT_MS-1000).toISOString(),refund_requested_at:new Date(now).toISOString(),payment_asset:'SOL',payment_mint:null,payment_symbol:'SOL',payment_decimals:9,payment_recipient:created.address,payment_amount:'0.001',payment_amount_atomic:'1000000'};
+ const original={db:server.db,rpc:payments.mainnetRpc};let sends=0;
+ payments.mainnetRpc=async()=>({getLatestBlockhash:async()=>({blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:200}),getBlockHeight:async()=>100,sendRawTransaction:async()=>{assert.ok(row.settlement_signature);sends++;return row.settlement_signature;}});
+ server.db=()=>({from(){let patch;const chain={select(){return chain},eq(){return chain},is(){return chain},update(value){patch=value;return chain},async single(){return {data:account}},async maybeSingle(){Object.assign(row,patch);return {data:{id:row.id}}}};return chain;}});
+ try{const prepared=await escrow.prepareSettlement(row,'refund');assert.equal(prepared.platformFee,'0');assert.equal(prepared.recipientAmount,'1000000');assert.equal(prepared.feePayer,row.wallet);
+ const tx=Transaction.from(Buffer.from(prepared.transaction,'base64'));assert.equal(tx.instructions.length,2);const transfer=SystemProgram.programId.equals(tx.instructions[0].programId);assert.equal(transfer,true);assert.equal(tx.instructions[0].keys[1].pubkey.toBase58(),row.wallet);assert.equal(tx.instructions[0].data.readBigUInt64LE(4),1000000n);
+ await assert.rejects(escrow.broadcastSettlement(row,prepared.transaction),/did not sign/);assert.equal(sends,0);
+ tx.partialSign(buyer);await escrow.broadcastSettlement(row,tx.serialize({requireAllSignatures:false}).toString('base64'));assert.equal(sends,1);await escrow.broadcastSettlement(row,'');assert.equal(sends,2);assert.ok(row.settlement_raw);
+ }finally{server.db=original.db;payments.mainnetRpc=original.rpc;}
+});
+test('buyer can resume a reserved refund without preparing or sending a second transfer',async()=>{
+ const {NextRequest}=require('next/server'),nacl=require('tweetnacl'),bs58=require('bs58').default,route=require('../src/app/api/order-refunds/[id]/route.ts'),id='41047fe6-a981-4d9f-8f06-1c11037d803c',buyer=Keypair.generate();
+ const authorization={wallet:buyer.publicKey.toBase58(),timestamp:Date.now(),nonce:require('node:crypto').randomUUID()};authorization.signature=bs58.encode(nacl.sign.detached(Buffer.from(refundModel.refundAuthorizationMessage(id,authorization)),buyer.secretKey));
+ const original=server.db;let reads=0;const row={wallet:authorization.wallet,escrow_account_id:'777',refund_reason:'review_timeout',status:'refund_pending',settlement_signature:'existing-signature',settlement_raw:'private-raw'};
+ server.db=()=>({from(){reads++;return {select(){return this},eq(){return this},async maybeSingle(){return {data:row}}}}});
+ try{const response=await route.POST(new NextRequest('http://localhost/api/order-refunds/'+id,{method:'POST',headers:{origin:'http://localhost'},body:JSON.stringify({action:'prepare',authorization})}),{params:Promise.resolve({id})});assert.equal(response.status,200);assert.deepEqual(await response.json(),{pending:true,signature:'existing-signature'});assert.equal(response.headers.get('cache-control'),'private, no-store');assert.equal(reads,1);}finally{server.db=original;}
+});

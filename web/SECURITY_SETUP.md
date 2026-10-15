@@ -21,3 +21,23 @@ Middleware applies shared, atomic fixed-window limits before API handlers. OAuth
 429 responses include Retry-After; limiter errors fail closed with 503. The authorized cron prunes expired buckets. Cron itself validates CRON_SECRET before doing work. This is application-level abuse protection, not a substitute for Vercel Firewall/DDoS protections; distributed attacks may still consume edge/database capacity and incur costs. Vercel Firewall configuration must be reviewed in the hosting account.
 
 Next.js and React have patched versions pinned. Legacy Solana/PrivacyCash dependency advisories may need separate SDK migrations; do not use npm audit fix --force on payment dependencies without verifying transaction compatibility.
+
+### Buyer refunds for unanswered orders
+
+Apply `sql/review-timeout-refunds.sql` before deploying the refund endpoints. The
+service-only, SECURITY INVOKER RPC atomically moves an order awaiting moderation
+from `pending_review` to `refund_pending` only after 72 hours from `paid_at`.
+`paid_at` is stamped when payment is first confirmed; historical pending escrow
+orders receive a fresh 72-hour window when the SQL is applied. Approval/rejection
+and a buyer claim compete through conditional database updates.
+
+Buyers use `/orders?id=…`, connect the original paying wallet, sign an order-bound
+five-minute authorization message, then separately sign the refund transaction.
+The escrow returns 100% of the recorded payment asset to the original buyer with
+zero platform fee; the buyer pays network fees and any token-account rent. Owner
+approval and owner wallet signatures are unnecessary. Moderators cannot prepare,
+reset, or broadcast these buyer-managed refunds. Signed settlement reservations
+and finality checks prevent a second refund; ambiguous history remains locked for
+reconciliation. The API is rate limited and never returns escrow keys or raw
+stored signed transactions. Existing administrator-approved refunds retain their
+original receiving-wallet signer flow.

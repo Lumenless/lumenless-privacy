@@ -7,20 +7,25 @@ import { orderTerms, orderAtomic } from './billing';
 import { TweetOrder } from './model';
 import { openEscrow } from '../business/escrow-keys';
 import { assertPreparedMessage } from './prepared-message';
+import { REVIEW_TIMEOUT_MS } from './refund-model';
 import { verifyPublishedPosts } from './x';
 const MEMO=new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 export function settlementAmounts(amount:bigint,kind:'payout'|'refund'){const fee=kind==='refund'?BigInt(0):amount*BigInt(1000)/BigInt(10000);return {fee,recipient:amount-fee};}
 export function requireSettlement(value:TweetOrder,kind:'payout'|'refund',now=Date.now()){
   if(!value.escrow_account_id||value.settled_at)throw new ApiError('This order has no available escrow balance.',409);
-  if(kind==='refund'){if(value.status!=='refund_pending')throw new ApiError('This order is not awaiting a refund.',409);}
+  if(kind==='refund'){if(value.status!=='refund_pending')throw new ApiError('This order is not awaiting a refund.',409);if(value.refund_reason==='review_timeout'){const deadline=Date.parse(value.paid_at||'')+REVIEW_TIMEOUT_MS,requested=Date.parse(value.refund_requested_at||'');if(!Number.isFinite(deadline)||!Number.isFinite(requested)||now<deadline||requested<deadline||requested>now)throw new ApiError('The 72-hour review deadline has not passed.',409);}}
   else if(value.status!=='published'||!value.published_at||!Number.isFinite(Date.parse(value.published_at))||now<Date.parse(value.published_at)+86400000)throw new ApiError('Payout is available 24 hours after the whole order was successfully published.',409);
 }
-async function account(value:TweetOrder){const {data,error}=await db().from('business_x_accounts').select('x_user_id,payout_wallet,escrow_address,escrow_secret').eq('x_user_id',value.escrow_account_id!).single();if(error||!data?.payout_wallet||data.escrow_address!==orderTerms(value).recipient)throw new ApiError('Escrow account configuration does not match this order.',503);return data;}
+async function account(value:TweetOrder){const {data,error}=await db().from('business_x_accounts').select('x_user_id,payout_wallet,escrow_address,escrow_secret').eq('x_user_id',value.escrow_account_id!).single();if(error||!data?.escrow_secret||data.escrow_address!==orderTerms(value).recipient)throw new ApiError('Escrow account configuration does not match this order.',503);return data;}
+export function settlementPayer(value:TweetOrder,kind:'payout'|'refund',owner:{payout_wallet:string|null}){
+  const payer=kind==='refund'&&value.refund_reason==='review_timeout'?value.wallet:owner.payout_wallet;
+  if(!payer)throw new ApiError('Receiving wallet is not configured.',503);return payer;
+}
 export async function prepareSettlement(value:TweetOrder,kind:'payout'|'refund'){
   requireSettlement(value,kind);if(value.settlement_signature)throw new ApiError('A settlement is already signed. Verify it before preparing another.',409);
   if(kind==='payout')await verifyPublishedPosts(value);
   const owner=await account(value);const terms=orderTerms(value);const amount=orderAtomic(value);const split=settlementAmounts(amount,kind);
-  const sourceOwner=new PublicKey(owner.escrow_address),payer=new PublicKey(owner.payout_wallet);if(payer.equals(sourceOwner))throw new ApiError('Receiving wallet cannot be the escrow wallet.');
+  const sourceOwner=new PublicKey(owner.escrow_address),payer=new PublicKey(settlementPayer(value,kind,owner));if(payer.equals(sourceOwner))throw new ApiError('Receiving wallet cannot be the escrow wallet.');
   const destination=new PublicKey(kind==='refund'?value.wallet:owner.payout_wallet);const platform=new PublicKey(TREASURY);const connection=await mainnetRpc();const latest=await connection.getLatestBlockhash('finalized');const transaction=new Transaction({feePayer:payer,...latest});
   if(terms.asset==='SOL'){
     if(amount>BigInt(Number.MAX_SAFE_INTEGER))throw new ApiError('SOL amount is outside the supported range.');
@@ -31,9 +36,9 @@ export async function prepareSettlement(value:TweetOrder,kind:'payout'|'refund')
   }
   transaction.add(new TransactionInstruction({programId:MEMO,keys:[{pubkey:sourceOwner,isSigner:true,isWritable:false}],data:Buffer.from(`lumenless:escrow:${kind}:${value.id}`)}));
   const messageHash=hash(transaction.serializeMessage().toString('base64'));
-  const saved=await db().from('tweet_orders').update({settlement_kind:kind,settlement_message_hash:messageHash,settlement_last_valid_height:latest.lastValidBlockHeight,settlement_recipient:owner.payout_wallet}).eq('id',value.id).is('settlement_signature',null).is('settled_at',null).eq('status',value.status).select('id').maybeSingle();
+  const saved=await db().from('tweet_orders').update({settlement_kind:kind,settlement_message_hash:messageHash,settlement_last_valid_height:latest.lastValidBlockHeight,settlement_recipient:payer.toBase58()}).eq('id',value.id).is('settlement_signature',null).is('settled_at',null).eq('status',value.status).select('id').maybeSingle();
   if(saved.error||!saved.data)throw new ApiError('Order changed. Refresh before preparing the settlement.',409);
-  return {transaction:transaction.serialize({requireAllSignatures:false}).toString('base64'),feePayer:owner.payout_wallet,recipientAmount:split.recipient.toString(),platformFee:split.fee.toString()};
+  return {transaction:transaction.serialize({requireAllSignatures:false}).toString('base64'),feePayer:payer.toBase58(),refundAmount:terms.amount,refundSymbol:terms.symbol,recipientAmount:split.recipient.toString(),platformFee:split.fee.toString()};
 }
 export async function broadcastSettlement(value:TweetOrder,raw:string){
   const kind=value.settlement_kind;if(!kind)throw new ApiError('Prepare the escrow transaction first.');requireSettlement(value,kind);
@@ -41,7 +46,7 @@ export async function broadcastSettlement(value:TweetOrder,raw:string){
   if(raw.length>10000)throw new ApiError('Settlement transaction is too large.');const transaction=Transaction.from(Buffer.from(raw,'base64'));
   assertPreparedMessage(transaction,value.settlement_message_hash);
   if(transaction.feePayer?.toBase58()!==value.settlement_recipient||!transaction.signatures.some(s=>s.publicKey.toBase58()===value.settlement_recipient&&!!s.signature)||!transaction.verifySignatures(false))throw new ApiError('Settlement changed or the receiving wallet did not sign it.');
-  const owner=await account(value);if(owner.payout_wallet!==value.settlement_recipient)throw new ApiError('Receiving wallet changed. Prepare a new transaction.',409);
+  const owner=await account(value);if(settlementPayer(value,kind,owner)!==value.settlement_recipient)throw new ApiError('Receiving wallet changed. Prepare a new transaction.',409);
   if(kind==='payout')await verifyPublishedPosts(value);
   const connection=await mainnetRpc();if(!value.settlement_last_valid_height||await connection.getBlockHeight('finalized')>value.settlement_last_valid_height)throw new ApiError('Settlement expired. Prepare it again.',409);
   transaction.partialSign(openEscrow(value.escrow_account_id!,owner.escrow_secret,owner.escrow_address));if(!transaction.verifySignatures()||!transaction.signature)throw new ApiError('Settlement signatures are incomplete.');
