@@ -1,6 +1,6 @@
 # Lumenless Business: multiple X accounts
 
-Anyone can connect an X account via Business. OAuth verifies /users/me and stores tokens in the private business_x_accounts table keyed by stable X user ID. Each account receives https://lumenless.com/u/@username. The main homepage remains @lumenless.
+Anyone can connect an X account via Business. OAuth verifies /users/me and stores tokens in the private business_x_accounts table keyed by stable X user ID. Each account receives https://lumenless.com/u/username. The main homepage remains @lumenless.
 
 ## Upgrade
 

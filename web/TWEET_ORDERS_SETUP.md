@@ -1,6 +1,6 @@
 # Lumenless tweet orders
 
-The web homepage sells posts on **@lumenless**. Connected accounts have their own `/u/@username` checkout; see BUSINESS_SETUP.md and apply sql/multi-account.sql after the initial schema. A single tweet costs **1,000,000 LUMEN**; a thread of **2–5 tweets costs 3,000,000 LUMEN**. Email and Telegram contacts are independently optional. Token mint: `6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM`. Treasury: `LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb`.
+The web homepage sells posts on **@lumenless**. Connected accounts have their own `/u/username` checkout; see BUSINESS_SETUP.md and apply sql/multi-account.sql after the initial schema. A single tweet costs **1,000,000 LUMEN**; a thread of **2–5 tweets costs 3,000,000 LUMEN**. Email and Telegram contacts are independently optional. Token mint: `6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM`. Treasury: `LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb`.
 
 ## Setup
 
