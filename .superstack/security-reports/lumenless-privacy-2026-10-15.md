@@ -121,3 +121,11 @@ regression tests; this is not an independent cryptographic audit of the forks.
 Current critical/high audit entries: 0. Remaining lower-severity advisories:
 web 45 (15 low, 30 moderate), mobile 40 (4 low, 36 moderate), Solana JS 8
 (1 low, 7 moderate). Re-run CI regularly because advisory data changes.
+
+## CI portability follow-up
+
+Initial GitHub Linux install used npm 11.19.0, whereas the local toolchain was
+npm 11.6.2. Its stricter lockfile validation found a missing optional bufferutil
+entry. Lockfiles were regenerated with npm 11.19.0 and CI now pins that npm
+version. Actions use Node 24-native checkout/setup-node v6 at verified immutable
+SHAs. This is a lockfile compatibility fix; no audit rule was relaxed.
