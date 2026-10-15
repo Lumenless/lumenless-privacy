@@ -104,3 +104,13 @@ test('moderation actions reject missing sessions and cross-origin requests befor
  assert.equal((await queue.POST(req('tweets','POST',cookie(admin),'https://evil.example'))).status,403);
  assert.equal((await queue.POST(req('tweets'))).status,401);
 });
+test('public order lookup selects only safe status fields and handles invalid/missing IDs',async()=>{
+ const route=require('../src/app/api/order-status/[id]/route.ts');const original=server.db;
+ const id='96074246-44a9-4718-8a61-8e1c8f5d61ae';let missing=false;
+ server.db=()=>({from(table){assert.equal(table,'tweet_orders');return {select(fields){assert.equal(fields,'id,status,created_at,updated_at,published_ids');return {eq(column,value){assert.equal(column,'id');assert.equal(value,id);return {async maybeSingle(){return {data:missing?null:{id,status:'pending_review',published_ids:[]},error:null}}}}}}}}});
+ try {
+ const response=await route.GET(req('status','GET'),{params:Promise.resolve({id})});assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/no-store/);assert.deepEqual(Object.keys(await response.json()).sort(),['id','published_ids','status']);
+ assert.equal((await route.GET(req('status','GET'),{params:Promise.resolve({id:'invalid'})})).status,400);
+ missing=true;assert.equal((await route.GET(req('status','GET'),{params:Promise.resolve({id})})).status,404);
+ }finally{server.db=original;}
+});
