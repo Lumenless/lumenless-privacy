@@ -4,6 +4,8 @@ import { ApiError, checkOrigin, db, failure, hash, notify, order, requireAdmin, 
 import { buildTransfer, guardPending, reserveAndBroadcast, verifyTransfer } from '@/lib/tweet-orders/payments';
 import { publish, reconcile } from '@/lib/tweet-orders/x';
 
+import { prepareSettlement, broadcastSettlement, verifySettlement, resetSettlement } from '@/lib/tweet-orders/escrow';
+
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 export async function GET(request: NextRequest) {
@@ -20,15 +22,24 @@ export async function POST(request: NextRequest) {
   try {
     checkOrigin(request); await requireAdmin(request);
     const body = await request.json();
+    if (typeof body.action !== 'string') throw new ApiError('Action is required.');
     if (typeof body.id !== 'string') throw new ApiError('Order ID is required.');
     const value = await order(body.id, request, true);
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
     const client = db();
-    if (['approve', 'reject', 'reject-refund'].includes(body.action)) {
+    if (body.action === 'escrow-prepare') {
+      if (!['payout','refund'].includes(body.kind)) throw new ApiError('Choose payout or refund.');
+      return NextResponse.json(await prepareSettlement(value,body.kind));
+    } else if (body.action === 'escrow-broadcast') {
+      if (typeof body.signedTransaction !== 'string') throw new ApiError('Signed transaction is required.');
+      return NextResponse.json(await broadcastSettlement(value,body.signedTransaction));
+    } else if (body.action === 'escrow-verify') { return NextResponse.json(await verifySettlement(value));
+    } else if (body.action === 'escrow-reset') { await resetSettlement(value);
+    } else if (['approve', 'reject', 'reject-refund'].includes(body.action)) {
       if (value.status !== 'pending_review') throw new ApiError('This order was already reviewed.', 409);
       if (body.action !== 'approve' && !note) throw new ApiError('Add a rejection reason.');
       const status = body.action === 'approve' ? 'approved' : body.action === 'reject' ? 'rejected' : 'refund_pending';
-      const { data, error } = await client.from('tweet_orders').update({ status, review_note: note || null, updated_at: new Date().toISOString() })
+      const { data, error } = await client.from('tweet_orders').update({ status, ...(status === 'approved' ? { accepted_at: new Date().toISOString() } : {}), review_note: note || null, updated_at: new Date().toISOString() })
         .eq('id', value.id).eq('status', 'pending_review').select().maybeSingle();
       if (error || !data) throw new ApiError('Order changed. Refresh the queue.', 409);
       if (status === 'approved') await publish(value.id);
@@ -54,6 +65,8 @@ export async function POST(request: NextRequest) {
     } else if (body.action === 'notify') {
       if (!value.payment_signature) throw new ApiError('This order is unpaid.');
       await notify(value);
+    } else if (body.action.startsWith('refund-') && value.escrow_account_id) {
+      throw new ApiError('Use the escrow refund controls for this order.');
     } else if (body.action === 'refund-reset') {
       if (value.status !== 'refund_pending') throw new ApiError('This order is not awaiting a refund.', 409);
       await guardPending(value, true);

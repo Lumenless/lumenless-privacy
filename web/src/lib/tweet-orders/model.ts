@@ -13,6 +13,7 @@ export const mediaSchema = z.object({
 });
 export const draftSchema = z.object({
   targetUsername: z.string().regex(/^[a-z0-9_]{1,15}$/).optional(),
+  paymentTerms: z.object({ asset:z.enum(['SOL','SPL']), mint:z.string().nullable(), symbol:z.string().max(16), decimals:z.number().int().min(0).max(18), recipient:z.string(), amount:z.string().max(40) }).optional(),
   wallet: z.string().min(32).max(44),
   kind: z.enum(['tweet', 'thread']),
   tweets: z.array(z.object({ text: z.string().trim().max(4000), media: z.array(mediaSchema).max(4) })
@@ -33,7 +34,7 @@ export const draftSchema = z.object({
 });
 export type Draft = z.infer<typeof draftSchema>;
 export type TweetOrder = {
-  id: string; paid_partnership?: boolean | null; target_x_user_id?: string | null; target_username?: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
+  id: string; escrow_account_id?: string | null; accepted_at?: string | null; published_at?: string|null; platform_fee_bps?: number; settlement_kind?: 'payout'|'refund'|null; settlement_message_hash?: string|null; settlement_last_valid_height?: number|null; settlement_signature?: string|null; settlement_raw?: string|null; settled_at?: string|null; settlement_recipient?: string|null; payment_asset?: 'SOL' | 'SPL' | null; payment_mint?: string | null; payment_symbol?: string | null; payment_decimals?: number | null; payment_recipient?: string | null; payment_amount?: string | null; payment_amount_atomic?: string | null; paid_partnership?: boolean | null; target_x_user_id?: string | null; target_username?: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
   email: string | null; telegram: string | null; amount_tokens: number;
   status: 'awaiting_payment' | 'pending_review' | 'approved' | 'publishing' | 'publish_failed' | 'publish_uncertain' | 'published' | 'rejected' | 'refund_pending' | 'refunded';
   payment_signature: string | null; refund_signature: string | null;

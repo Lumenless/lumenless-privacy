@@ -131,8 +131,8 @@ test('server signature reservation allows the same refund and blocks a different
   finally {server.db=originalDb;server.env=originalEnv;Connection.prototype.sendRawTransaction=originalSend;}
 });
 test('automatic checkout prefers sufficient LUMEN, including the exact price', () => {
-  assert.deepEqual(payments.choosePayment(1000000n,1000000n,0n),{method:'LUMEN'});
-  assert.deepEqual(payments.choosePayment(2000000n,1000000n,1000000000n),{method:'LUMEN'});
+  assert.deepEqual(payments.choosePayment(1000000n,1000000n,0n),{method:'DIRECT'});
+  assert.deepEqual(payments.choosePayment(2000000n,1000000n,1000000000n),{method:'DIRECT'});
 });
 test('automatic checkout falls back to SOL for missing or insufficient LUMEN and reserves fees', () => {
   assert.deepEqual(payments.choosePayment(0n,1000000n,1000000000n),{method:'SOL',maxSol:'0.995000000'});

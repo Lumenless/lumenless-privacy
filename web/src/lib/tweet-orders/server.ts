@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { orderTerms } from './billing';
 import { MEDIA_BUCKET, TweetOrder } from './model';
 
 export class ApiError extends Error { constructor(message: string, public status = 400, public retryAfter?: number) { super(message); } }
@@ -49,8 +50,8 @@ export async function order(id: string, request: NextRequest, admin = false) {
   return data as TweetOrder;
 }
 export async function withMedia(value: TweetOrder) {
-  const { token_hash: _token, payment_message_hash: _payment, refund_message_hash: _refund, swap_message_hash: _swap, swap_request_id: _request, ...safe } = value;
-  void [_token, _payment, _refund, _swap, _request];
+  const { token_hash: _token, payment_message_hash: _payment, refund_message_hash: _refund, swap_message_hash: _swap, swap_request_id: _request, settlement_raw: _settlement, settlement_message_hash: _settlementMessage, ...safe } = value;
+  void [_token, _payment, _refund, _swap, _request, _settlement, _settlementMessage];
   const tweets = await Promise.all(value.tweets.map(async tweet => ({ ...tweet, media: await Promise.all(tweet.media.map(async file => {
     const { data, error } = await db().storage.from(MEDIA_BUCKET).createSignedUrl(file.path, 600);
     if (error) throw new ApiError('Could not load media.', 503);
@@ -68,7 +69,7 @@ export async function notify(value: TweetOrder) {
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
     body: JSON.stringify({ chat_id: env('TELEGRAM_ADMIN_CHAT_ID'), text:
-      `New paid ${value.kind} for @${value.target_username || 'lumenless'}\nOrder: ${value.id}\n${value.amount_tokens.toLocaleString('en-US')} LUMEN\n${env('BUSINESS_APP_URL')}/business/tweets`,
+      `New paid ${value.kind} for @${value.target_username || 'lumenless'}\nOrder: ${value.id}\n${orderTerms(value).amount} ${orderTerms(value).symbol}\n${env('BUSINESS_APP_URL')}/business/tweets`,
       link_preview_options: { is_disabled: true } }),
   });
   const result = await response.json();

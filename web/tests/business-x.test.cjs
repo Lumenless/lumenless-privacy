@@ -140,7 +140,7 @@ test('public storefront @ handles rewrite to the dynamic username route',async()
 });
 test('publishing settings are private, validate booleans and update only the session account',async()=>{
  const settings=require('../src/app/api/business/settings/route.ts');const original=server.db;let selection,patch;
- server.db=()=>({from(table){assert.equal(table,'business_x_accounts');const chain={select(fields){assert.equal(fields,'paid_partnership');return chain},eq(field,id){assert.equal(field,'x_user_id');selection=id;return chain},update(value){patch=value;return chain},async maybeSingle(){return {data:{paid_partnership:patch?patch.paid_partnership:true}}}};return chain;}});
+ server.db=()=>({from(table){assert.equal(table,'business_x_accounts');const chain={select(fields){assert.ok(fields.startsWith('paid_partnership'));return chain},eq(field,id){assert.equal(field,'x_user_id');selection=id;return chain},update(value){patch=value;return chain},async maybeSingle(){return {data:{paid_partnership:patch?patch.paid_partnership:true}}}};return chain;}});
  const session={...credentials,account:{id:'777',username:'heymike777',name:'Mike'}};
  const request=body=>new NextRequest(origin+'/api/business/settings',{method:'POST',headers:{host:new URL(origin).host,origin,cookie:cookie(session),'content-type':'application/json'},body:JSON.stringify(body)});
  try{

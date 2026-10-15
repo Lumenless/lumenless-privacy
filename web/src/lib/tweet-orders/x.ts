@@ -113,7 +113,7 @@ export async function publish(id: string) {
       value.published_ids.push(result.data.id);
       await save(value, { published_ids: value.published_ids, publish_attempt: null });
     }
-    await save(value, { status: 'published', published_url: `https://x.com/${value.target_username || 'lumenless'}/status/${value.published_ids[0]}`, publish_error: null });
+    await save(value, { status: 'published', published_at: new Date().toISOString(), published_url: `https://x.com/${value.target_username || 'lumenless'}/status/${value.published_ids[0]}`, publish_error: null });
   } catch (error) {
     const uncertain = error instanceof XError && error.uncertain;
     await save(value, { status: uncertain ? 'publish_uncertain' : 'publish_failed', publish_attempt: uncertain ? value.publish_attempt : null,
@@ -137,7 +137,13 @@ export async function reconcile(value: TweetOrder, postId: string) {
   if (index && !post.data?.referenced_tweets?.some((ref: { type: string; id: string }) => ref.type === 'replied_to' && ref.id === value.published_ids[index - 1]))
     throw new ApiError('This post is not a reply to the previous thread post.');
   const ids = [...value.published_ids, postId];
-  const { error } = await db().from('tweet_orders').update({ published_ids: ids, publish_attempt: null, status: ids.length === value.tweets.length ? 'published' : 'approved',
+  const { error } = await db().from('tweet_orders').update({ published_ids: ids, publish_attempt: null, status: ids.length === value.tweets.length ? 'published' : 'approved', ...(ids.length === value.tweets.length ? { published_at: new Date().toISOString() } : {}),
     published_url: `https://x.com/${value.target_username || 'lumenless'}/status/${ids[0]}`, publish_error: null, updated_at: new Date().toISOString() }).eq('id', value.id).eq('status', 'publish_uncertain');
   if (error) throw new ApiError('Could not reconcile the publication.', 503);
+}
+export async function verifyPublishedPosts(value: TweetOrder) {
+  if (!value.target_x_user_id || value.published_ids.length !== value.tweets.length || !value.published_ids.length) throw new ApiError('This order is not fully published.',409);
+  const {token}=await accessToken(value);
+  const result=await xFetch(`/tweets?ids=${value.published_ids.join(',')}&tweet.fields=author_id`,token);
+  if (!Array.isArray(result.data) || value.published_ids.some(id=>!result.data.some((post:{id:string;author_id:string})=>post.id===id&&post.author_id===value.target_x_user_id))) throw new ApiError('Every post must still exist on the correct X account before funds can be released.',409);
 }
