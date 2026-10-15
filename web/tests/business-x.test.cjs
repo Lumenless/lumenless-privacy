@@ -63,10 +63,10 @@ test('callback accepts the authenticated X account and binds returned credential
  const original=global.fetch;const flow={type:'oauth',expires:Date.now()+600000,state:'valid-state',verifier:'verifier'};
  global.fetch=async(url,init)=>{
   if(url.endsWith('/oauth2/token')){assert.equal(init.body.get('code_verifier'),'verifier');return Response.json({access_token:'account-access',refresh_token:'account-refresh',token_type:'bearer',expires_in:7200,scope:sessions.SCOPES.join(' ')});}
-  return Response.json({data:{id:'999',username:'lumenless',name:'Any User'}});
+  return Response.json({data:{id:'999',username:'lumenless',name:'Any User',profile_image_url:'https://pbs.twimg.com/profile_images/avatar.jpg'}});
  };
  try{const response=await callback.GET(new NextRequest(origin+'/api/business/x/callback?code=valid&state=valid-state',{headers:{cookie:cookie(flow,sessions.FLOW_COOKIE)}}));
-  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.equal(saved.refresh_token,'account-refresh');assert.equal(saved.x_user_id,'999');assert.equal(session.persisted,true);assert.equal(session.refreshToken,undefined);assert.equal(session.accessToken,undefined);
+  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.equal(saved.refresh_token,'account-refresh');assert.equal(saved.x_user_id,'999');assert.equal(saved.profile_image_url,'https://pbs.twimg.com/profile_images/avatar.jpg');assert.equal(session.persisted,true);assert.equal(session.refreshToken,undefined);assert.equal(session.accessToken,undefined);
   assert.equal(response.cookies.get(sessions.FLOW_COOKIE).value,'');assert.ok(!response.headers.get('location').includes('account-refresh'));
  }finally{global.fetch=original;}
 });
@@ -147,4 +147,10 @@ test('publishing settings are private, validate booleans and update only the ses
  assert.equal((await settings.POST(request({paidPartnership:'false'}))).status,400);
  assert.equal((await (await settings.POST(request({paidPartnership:false}))).json()).paidPartnership,false);assert.equal(selection,'777');assert.equal(patch.paid_partnership,false);
  }finally{server.db=original;}
+});
+
+test('X avatars accept only HTTPS images from the X image host',()=>{
+ const {profileImageUrl}=require('../src/lib/business/accounts.ts');
+ assert.equal(profileImageUrl('https://pbs.twimg.com/profile_images/avatar_normal.jpg'),'https://pbs.twimg.com/profile_images/avatar_normal.jpg');
+ for(const value of ['http://pbs.twimg.com/a','https://pbs.twimg.com.attacker.com/a','https://user@pbs.twimg.com/a','javascript:alert(1)',null])assert.equal(profileImageUrl(value),null);
 });
