@@ -39,7 +39,7 @@ export type TweetOrder = {
   status: 'awaiting_payment' | 'pending_review' | 'approved' | 'publishing' | 'publish_failed' | 'publish_uncertain' | 'published' | 'rejected' | 'refund_pending' | 'refunded';
   payment_signature: string | null; refund_signature: string | null;
   review_note: string | null; published_url: string | null; created_at: string;
-  token_hash: string; notification_sent_at: string | null;
+  token_hash: string; owner_notification_done?: boolean; notification_sent_at: string | null;
   published_ids: string[]; x_media: Record<string, { id: string; ready: boolean; expires: number }>;
   publish_attempt: number | null; publish_error: string | null; updated_at: string;
   payment_message_hash: string | null; refund_message_hash: string | null;

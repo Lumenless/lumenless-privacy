@@ -41,3 +41,27 @@ and finality checks prevent a second refund; ambiguous history remains locked fo
 reconciliation. The API is rate limited and never returns escrow keys or raw
 stored signed transactions. Existing administrator-approved refunds retain their
 original receiving-wallet signer flow.
+
+### Publisher Telegram notifications
+
+Apply `sql/business-telegram.sql`. Business owners link a private Telegram chat
+using a random, hashed, single-use challenge valid for ten minutes. Link
+creation/disconnection/test messages require the X Business session and same
+origin. Neither chat IDs nor target X IDs are accepted from the browser.
+`business_telegram` has RLS and no anon/authenticated grants. The service-only
+invoker RPC consumes the challenge and binds its verified Telegram sender
+atomically. The webhook checks Telegram's secret header before reading any
+payload or database data; groups, bot senders and mismatched sender/chat IDs are
+ignored. Its secret is domain-separated HMAC of the existing bot token, so no
+additional environment variable is needed. Reconnect after rotating the bot
+token to refresh Telegram's webhook secret.
+
+The Connect Telegram action registers the webhook on BUSINESS_APP_URL and
+refuses to overwrite a different existing webhook. Use the production HTTPS
+Business URL, and keep the one-time link private. The bot's username is resolved
+from getMe. The UI offers connection checks, test notifications and disconnect.
+Delivery to the platform and account owner is tracked separately, retried by the
+existing cron, and deduplicated when both destinations are the same chat.
+Historical paid orders are not sent retroactively to newly connected owners.
+As with most external message APIs, a crash after successful send but before the
+database acknowledgement can cause a repeated notification on retry.

@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { orderTerms } from './billing';
 import { MEDIA_BUCKET, TweetOrder } from './model';
 
 export class ApiError extends Error { constructor(message: string, public status = 400, public retryAfter?: number) { super(message); } }
@@ -64,16 +63,6 @@ export function failure(error: unknown) {
   return NextResponse.json({ error: 'The request failed. Please try again.' }, { status: 500 });
 }
 export async function notify(value: TweetOrder) {
-  if (value.notification_sent_at) return;
-  const token = env('TELEGRAM_BOT_TOKEN');
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
-    body: JSON.stringify({ chat_id: env('TELEGRAM_ADMIN_CHAT_ID'), text:
-      `New paid ${value.kind} for @${value.target_username || 'lumenless'}\nOrder: ${value.id}\n${orderTerms(value).amount} ${orderTerms(value).symbol}\n${env('BUSINESS_APP_URL')}/business/tweets`,
-      link_preview_options: { is_disabled: true } }),
-  });
-  const result = await response.json();
-  if (!response.ok || !result.ok) throw new ApiError('Telegram notification could not be delivered.', 502);
-  const { error } = await db().from('tweet_orders').update({ notification_sent_at: new Date().toISOString() }).eq('id', value.id);
-  if (error) throw new ApiError('Could not save notification status.', 503);
+  const { notifyOrder } = await import('../business/notifications');
+  await notifyOrder(value);
 }

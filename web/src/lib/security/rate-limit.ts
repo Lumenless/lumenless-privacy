@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 export type Limit = { name: string; limit: number; seconds: number };
 export function requestLimit(path: string, method: string): Limit | null {
+  if (path === '/api/business/telegram/webhook') return null; // Telegram secret is checked before any database access.
   if (path.startsWith('/api/cron/')) return null; // These endpoints require CRON_SECRET before doing work.
   if (path === '/api/business/x/start') return { name: 'oauth-start', limit: 10, seconds: 600 };
   if (path === '/api/business/x/callback') return { name: 'oauth-callback', limit: 20, seconds: 600 };
