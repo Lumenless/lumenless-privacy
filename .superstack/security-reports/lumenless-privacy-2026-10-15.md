@@ -129,3 +129,9 @@ npm 11.6.2. Its stricter lockfile validation found a missing optional bufferutil
 entry. Lockfiles were regenerated with npm 11.19.0 and CI now pins that npm
 version. Actions use Node 24-native checkout/setup-node v6 at verified immutable
 SHAs. This is a lockfile compatibility fix; no audit rule was relaxed.
+
+GitHub Dependabot API independently confirmed zero open critical/high alerts
+following remediation (18 distinct moderate/low alerts remain). CI pins Node
+24.21.0, which bundles npm 11.19.0, instead of redundantly downloading npm. Yarn
+installation retries at most three times for transient npm registry HTTP 503;
+frozen lockfile validation and the audit threshold remain unchanged.

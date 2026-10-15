@@ -20,10 +20,10 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24'
+          node-version: '24.21.0'
           cache: npm
           cache-dependency-path: ${{ matrix.project }}/package-lock.json
-      - run: npm install --global npm@11.19.0 --ignore-scripts
+      - run: test "$(npm --version)" = "11.19.0"
       - run: npm ci --ignore-scripts
       - run: npm audit --audit-level=high
       - if: matrix.project == 'web'
@@ -45,9 +45,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24'
+          node-version: '24.21.0'
       - run: npm install --global yarn@1.22.22
-      - run: yarn install --frozen-lockfile --ignore-scripts --registry https://registry.npmjs.org
+      - name: Install locked Yarn dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if yarn install --frozen-lockfile --ignore-scripts --registry https://registry.npmjs.org; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 10
+          done
       - run: node ../scripts/audit-yarn.cjs
   rust:
     runs-on: ubuntu-latest
