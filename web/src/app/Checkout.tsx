@@ -146,6 +146,10 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">Have a project to launch, a story to share, or something you want people to discover? Put it on the Lumenless X page.</p>
         <p className="mt-5 text-xl font-semibold">Just {singleTweetPrice} {singleTweetTerms.symbol} per tweet.</p>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">Write your post, add photos or a video, and submit it for review. We publish approved posts to @lumenless.{singleTweetTerms.asset === 'SPL' ? ' Pay with '+singleTweetTerms.symbol+' or SOL.' : ' Pay with '+singleTweetTerms.symbol+'.'}</p>
+        <div className="mt-8 flex flex-col items-start gap-4 rounded-2xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div><p className="font-medium">Have your own X audience?</p><p className="mt-1 text-sm text-muted-foreground">Sell paid tweets and threads on your account.</p></div>
+          <Button asChild className="h-12 w-full rounded-xl px-6 sm:w-auto"><a href="https://business.lumenless.com/">Earn with your X</a></Button>
+        </div>
       </> : <><p className="mb-4 text-sm font-medium uppercase tracking-widest text-primary">Your voice. Our timeline.</p><h1 className="text-4xl font-semibold tracking-tight md:text-6xl">Put your next idea<br />on <span className="text-primary">@{username}.</span></h1><p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">Write a tweet or a thread. Pay with {selectedTerms.symbol}{selectedTerms.asset === 'SPL' ? ' or SOL' : ''}. We review it, then publish it to @{username}.</p></>}</div>
       <div className="grid items-start gap-8 lg:grid-cols-[1fr_360px]">
         <section className="rounded-2xl border border-border bg-card p-5 md:p-8" aria-label="Tweet composer" aria-busy={!!busy}>
