@@ -6,7 +6,7 @@
 2. Apply sql/api-rate-limits.sql in the intended Supabase project. Both the private table and invoker RPCs deny public/anon/authenticated access; only service_role may consume/prune buckets.
 3. Deploy the security-compatible code. Missing key/RPC causes protected API requests to fail closed with 503. The public session endpoint reports tokenStorageVersion and a non-secret key fingerprint so migration can verify the deployed key matches.
 4. Run node scripts/migrate-x-tokens.cjs (inspection), then node scripts/migrate-x-tokens.cjs --execute. Execution refuses to proceed until production confirms the expected encryption version/key. It encrypts both business_x_accounts and the legacy tweet_x_credentials in place, uses row locks, verifies decrypted equality without printing tokens, skips already encrypted rows and can be rerun safely. No plaintext backup files are created.
-5. After all rows are verified encrypted, remove the temporary legacy plaintext read compatibility and deploy strict decryption. Do not roll back to a build that cannot decrypt credentials.
+5. All existing records have been migrated and verified. The current application rejects plaintext tokens; only the local migration utility can read legacy plaintext for a deployment-gated migration. Deploy the strict-decryption build. Do not roll back to a build that cannot decrypt credentials.
 
 ## Encryption
 

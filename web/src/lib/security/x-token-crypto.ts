@@ -17,10 +17,9 @@ export function encryptToken(value: string, context: string) {
   return `${prefix}${encryptionKeyId()}:${Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url')}`;
 }
 export function decryptToken(value: string, context: string) {
-  key(); // Even a transitional plaintext read requires the production key to be configured.
+  key();
   if (typeof value !== 'string' || !value) throw new Error('Invalid X token.');
-  // Compatibility during deployment/migration only; new writes are always encrypted.
-  if (!value.startsWith('xenc:')) return value;
+  if (!value.startsWith(prefix)) throw new Error('Unencrypted X credentials are not accepted.');
   try {
     if (!value.startsWith(prefix)) throw new Error();
     const [id, payload, extra] = value.slice(prefix.length).split(':');

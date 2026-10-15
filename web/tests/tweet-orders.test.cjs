@@ -10,6 +10,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const { PublicKey, Keypair } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } = require('@solana/spl-token');
 process.env.X_TOKEN_ENCRYPTION_KEY = 'cd'.repeat(32);
+const cryptoTokens = require('../src/lib/security/x-token-crypto.ts');
 const model = require('../src/lib/tweet-orders/model.ts');
 const payments = require('../src/lib/tweet-orders/payments.ts');
 const server = require('../src/lib/tweet-orders/server.ts');
@@ -71,7 +72,7 @@ function mockDb(row, credentials = null) {
   return () => ({from(table) {
     let patch, expected;
     const chain={select(){return chain},eq(key,value){if(key==='status')expected=value;return chain},update(value){patch=value;return chain},
-      async maybeSingle(){if(table==='business_x_accounts')return {data:credentials};if(table==='tweet_x_credentials')return {data:{access_token:'test-token',expires_at:new Date(Date.now()+3600000).toISOString()}};
+      async maybeSingle(){if(table==='business_x_accounts')return {data:credentials?{...credentials,access_token:cryptoTokens.encryptToken(credentials.access_token,cryptoTokens.tokenContext('business_x_accounts',credentials.x_user_id,'access_token'))}:null};if(table==='tweet_x_credentials')return {data:{access_token:cryptoTokens.encryptToken('test-token',cryptoTokens.tokenContext('tweet_x_credentials',1,'access_token')),expires_at:new Date(Date.now()+3600000).toISOString()}};
         if(expected && row.status!==expected)return {data:null};if(patch)Object.assign(row,structuredClone(patch));return {data:structuredClone(row)};}};
     return chain;
   }});

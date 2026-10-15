@@ -4,7 +4,7 @@ const tokens=require('../src/lib/security/x-token-crypto.ts');const limits=requi
 process.env.X_TOKEN_ENCRYPTION_KEY='cd'.repeat(32);
 test('X token encryption is randomized, authenticated and bound to account and field',()=>{
  const context=tokens.tokenContext('business_x_accounts','777','access_token');const a=tokens.encryptToken('sensitive-token',context),b=tokens.encryptToken('sensitive-token',context);
- assert.notEqual(a,b);assert.ok(!a.includes('sensitive-token'));assert.equal(tokens.decryptToken(a,context),'sensitive-token');
+ assert.throws(()=>tokens.decryptToken('plaintext-token',context),/Unencrypted/);assert.notEqual(a,b);assert.ok(!a.includes('sensitive-token'));assert.equal(tokens.decryptToken(a,context),'sensitive-token');
  for(const wrong of [tokens.tokenContext('business_x_accounts','888','access_token'),tokens.tokenContext('business_x_accounts','777','refresh_token')])assert.throws(()=>tokens.decryptToken(a,wrong));
  const parts=a.split(':');const bytes=Buffer.from(parts[3],'base64url');bytes[bytes.length-1]^=1;parts[3]=bytes.toString('base64url');assert.throws(()=>tokens.decryptToken(parts.join(':'),context));
  const key=process.env.X_TOKEN_ENCRYPTION_KEY;process.env.X_TOKEN_ENCRYPTION_KEY='ef'.repeat(32);assert.throws(()=>tokens.decryptToken(a,context));delete process.env.X_TOKEN_ENCRYPTION_KEY;assert.throws(()=>tokens.encryptToken('token',context));process.env.X_TOKEN_ENCRYPTION_KEY=key;
