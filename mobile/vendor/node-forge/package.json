@@ -1,0 +1,9 @@
+{
+  "name": "@lumenless/node-forge-safe",
+  "version": "1.4.0-lumenless.1",
+  "main": "lib/index.js",
+  "license": "(BSD-3-Clause OR GPL-2.0)",
+  "engines": {
+    "node": ">= 6.13.0"
+  }
+}

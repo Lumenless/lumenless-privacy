@@ -61,14 +61,31 @@
     "react-native-url-polyfill": "^3.0.0",
     "react-native-webview": "^13.12.5",
     "readable-stream": "^4.5.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "bigint-buffer": "file:vendor/bigint-buffer"
   },
   "devDependencies": {
-    "@react-native-community/cli": "latest",
-    "@react-native/metro-config": "latest",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native/metro-config": "0.81.5",
     "@types/react": "~19.1.0",
-    "sharp": "^0.34.5",
-    "typescript": "~5.9.2"
+    "sharp": "0.35.5",
+    "typescript": "~5.9.2",
+    "braces": "file:vendor/braces",
+    "node-forge": "file:vendor/node-forge"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "bigint-buffer": "$bigint-buffer",
+    "braces": "$braces",
+    "toml": "4.2.0",
+    "image-size": "2.0.4",
+    "@grpc/grpc-js": "1.13.6",
+    "jsonpath": "1.3.0",
+    "postcss": "8.5.30",
+    "underscore": "1.13.8",
+    "ws@^7": "7.5.11",
+    "ws@^8": "8.22.0",
+    "ws@^6": "6.2.4",
+    "node-forge": "$node-forge"
+  }
 }
