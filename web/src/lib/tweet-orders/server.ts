@@ -28,14 +28,19 @@ export async function requireAdmin(request: NextRequest) {
   const origin = `${url.protocol}//${request.headers.get('host') || url.host}`;
   if (origin !== businessOrigin()) throw new ApiError('Use Lumenless Business to moderate orders.', 403);
   const session = openSession<import('../business/session').BusinessSession>(request.cookies.get(SESSION_COOKIE)?.value, 'credentials');
-  if (!session?.moderation || !session.persisted || session.account.username.toLowerCase() !== 'lumenless')
-    throw new ApiError('Sign in to Business with @lumenless.', 401);
+  if (!session?.moderation || !session.persisted || !/^\d+$/.test(session.account.id))
+    throw new ApiError('Sign in to Lumenless Business with X.', 401);
+  return session;
+}
+export function accountOwnsOrder(account: { id: string; username: string }, value: Pick<TweetOrder, 'target_x_user_id' | 'target_username'>) {
+  return value.target_x_user_id === account.id || (!value.target_x_user_id && value.target_username === 'lumenless' && account.username.toLowerCase() === 'lumenless');
 }
 export async function order(id: string, request: NextRequest, admin = false) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new ApiError('Order not found.', 404);
-  if (admin) await requireAdmin(request);
+  const adminSession = admin ? await requireAdmin(request) : null;
   const { data, error } = await db().from('tweet_orders').select('*').eq('id', id).maybeSingle();
   if (error) throw new ApiError('Could not load order.', 503);
+  if (adminSession && data && !accountOwnsOrder(adminSession.account, data)) throw new ApiError('Order not found.', 404);
   if (!data || (!admin && !same(hash(request.headers.get('x-order-token') || ''), data.token_hash)))
     throw new ApiError('Order not found.', 404);
   return data as TweetOrder;
@@ -60,7 +65,7 @@ export async function notify(value: TweetOrder) {
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
     body: JSON.stringify({ chat_id: env('TELEGRAM_ADMIN_CHAT_ID'), text:
-      `New paid ${value.kind} for @lumenless\nOrder: ${value.id}\n${value.amount_tokens.toLocaleString('en-US')} LUMEN\n${env('BUSINESS_APP_URL')}/business/tweets`,
+      `New paid ${value.kind} for @${value.target_username || 'lumenless'}\nOrder: ${value.id}\n${value.amount_tokens.toLocaleString('en-US')} LUMEN\n${env('BUSINESS_APP_URL')}/business/tweets`,
       link_preview_options: { is_disabled: true } }),
   });
   const result = await response.json();

@@ -24,13 +24,17 @@ export async function GET(request: NextRequest) {
     if (!userResponse.ok) throw new Error('account_lookup_failed');
     const { data } = await userResponse.json();
     if (!/^\d+$/.test(data?.id) || typeof data.username !== 'string' || typeof data.name !== 'string') throw new Error('account_lookup_failed');
-    if (data.username.toLowerCase() !== 'lumenless') throw new Error('wrong_account');
     const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
     // The publisher owns refresh rotation; Business only replaces the connection after OAuth.
-    const { error: saveError } = await db().from('tweet_x_credentials').upsert({ id: 1,
+    const { error: saveError } = await db().from('business_x_accounts').upsert({ x_user_id: data.id, username: data.username.toLowerCase(), name: data.name, updated_at: new Date().toISOString(),
       access_token: tokens.access_token, refresh_token: tokens.refresh_token,
       expires_at: tokenExpiresAt, lock_until: '1970-01-01' });
     if (saveError) throw new Error('save_failed');
+    if (data.username.toLowerCase() === 'lumenless') {
+      const linked = await db().from('tweet_orders').update({ target_x_user_id: data.id })
+        .is('target_x_user_id', null).eq('target_username', 'lumenless');
+      if (linked.error) throw new Error('save_failed');
+    }
     const response = NextResponse.redirect(redirect);
     sessionCookie(response, SESSION_COOKIE, sealSession({ type: 'credentials', expires: Date.now() + SESSION_TTL * 1000,
       account: { id: data.id, username: data.username, name: data.name }, tokenExpiresAt, persisted: true, moderation: true }), SESSION_TTL);

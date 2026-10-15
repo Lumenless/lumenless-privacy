@@ -5,6 +5,11 @@ export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const businessHost = host === 'business.lumenless.com';
   const businessPath = path === '/business' || path.startsWith('/business/') || path.startsWith('/api/business/');
+  // Normalize @ handles before Next.js interprets an @ segment as a parallel-route slot.
+  if (!businessHost && /^\/u\/(?:@|%40)/i.test(path)) {
+    const target = request.nextUrl.clone(); target.pathname = path.replace(/^\/u\/(?:@|%40)/i, '/u/');
+    return NextResponse.rewrite(target);
+  }
   if (!businessHost && !businessPath) return NextResponse.next();
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
   const mediaOrigin = (() => { try { return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').origin; } catch { return ''; } })();

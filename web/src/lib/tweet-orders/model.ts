@@ -12,6 +12,7 @@ export const mediaSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'Images must be under 10 MB.' });
 });
 export const draftSchema = z.object({
+  targetUsername: z.string().regex(/^[a-z0-9_]{1,15}$/).optional(),
   wallet: z.string().min(32).max(44),
   kind: z.enum(['tweet', 'thread']),
   tweets: z.array(z.object({ text: z.string().trim().max(4000), media: z.array(mediaSchema).max(4) })
@@ -32,7 +33,7 @@ export const draftSchema = z.object({
 });
 export type Draft = z.infer<typeof draftSchema>;
 export type TweetOrder = {
-  id: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
+  id: string; target_x_user_id?: string | null; target_username?: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
   email: string | null; telegram: string | null; amount_tokens: number;
   status: 'awaiting_payment' | 'pending_review' | 'approved' | 'publishing' | 'publish_failed' | 'publish_uncertain' | 'published' | 'rejected' | 'refund_pending' | 'refunded';
   payment_signature: string | null; refund_signature: string | null;

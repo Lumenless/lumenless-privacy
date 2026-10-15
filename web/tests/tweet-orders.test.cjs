@@ -66,11 +66,11 @@ test('SOL decimal conversion is precise and bounded', () => {
   assert.equal(jupiter.solLamports('0.000000001'),1n); assert.equal(jupiter.solLamports('1.123456789'),1123456789n);
   for (const bad of ['0','-1','1e2','1.0000000001','101']) assert.throws(()=>jupiter.solLamports(bad));
 });
-function mockDb(row) {
+function mockDb(row, credentials = null) {
   return () => ({from(table) {
     let patch, expected;
     const chain={select(){return chain},eq(key,value){if(key==='status')expected=value;return chain},update(value){patch=value;return chain},
-      async maybeSingle(){if(table==='tweet_x_credentials')return {data:{access_token:'test-token',expires_at:new Date(Date.now()+3600000).toISOString()}};
+      async maybeSingle(){if(table==='business_x_accounts')return {data:credentials};if(table==='tweet_x_credentials')return {data:{access_token:'test-token',expires_at:new Date(Date.now()+3600000).toISOString()}};
         if(expected && row.status!==expected)return {data:null};if(patch)Object.assign(row,structuredClone(patch));return {data:structuredClone(row)};}};
     return chain;
   }});
@@ -137,4 +137,26 @@ test('automatic checkout falls back to SOL for missing or insufficient LUMEN and
   assert.deepEqual(payments.choosePayment(999999n,1000000n,1000000000n),{method:'SOL',maxSol:'0.995000000'});
   assert.throws(()=>payments.choosePayment(0n,1000000n,5000000n));
   assert.deepEqual(payments.choosePayment(0n,1000000n,200000000000n),{method:'SOL',maxSol:'100.000000000'});
+});
+
+test('publisher uses the target account token and refuses a mismatched X user ID',async()=>{
+ const oldDb=server.db,oldFetch=global.fetch;
+ try { for(const accountId of ['777','888']){
+ const row={...structuredClone(base),status:'approved',target_x_user_id:'777',target_username:'heymike777'};
+ server.db=mockDb(row,{x_user_id:'777',access_token:'mike-token',expires_at:new Date(Date.now()+3600000).toISOString()});let posts=0;
+ global.fetch=async(url,init)=>{assert.equal(init.headers.Authorization,'Bearer mike-token');if(url.endsWith('/users/me'))return response({data:{id:accountId,username:'renamed_mike'}});posts++;return response({data:{id:'1234'}});};
+ if(accountId==='777'){await publish(row.id);assert.equal(row.status,'published');assert.equal(row.published_url,'https://x.com/heymike777/status/1234');assert.equal(posts,1);}
+ else{await assert.rejects(publish(row.id),/does not match/);assert.equal(row.status,'approved');assert.equal(posts,0);}
+ }}finally{server.db=oldDb;global.fetch=oldFetch;}
+});
+test('wallet authorization signs the chosen target account',()=>{
+ const a=model.draftSchema.parse({wallet,kind:'tweet',tweets:[{text:'Hello',media:[]}],acceptedTerms:true,targetUsername:'heymike777'});
+ const b={...a,targetUsername:'lumenless'};assert.notEqual(model.signingMessage(a,1,'nonce'),model.signingMessage(b,1,'nonce'));
+});
+test('a disconnected target account never falls back to the lumenless credentials',async()=>{
+ const oldDb=server.db,oldFetch=global.fetch;
+ const row={...structuredClone(base),status:'approved',target_x_user_id:'777',target_username:'heymike777'};
+ server.db=mockDb(row);global.fetch=async()=>{throw new Error('X must not be called with a different account token');};
+ try{await assert.rejects(publish(row.id),/connection is unavailable/);assert.equal(row.status,'approved');assert.deepEqual(row.published_ids,[]);}
+ finally{server.db=oldDb;global.fetch=oldFetch;}
 });

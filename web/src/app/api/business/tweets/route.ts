@@ -8,8 +8,10 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 export async function GET(request: NextRequest) {
   try {
-    await requireAdmin(request);
-    const { data, error } = await db().from('tweet_orders').select('*').neq('status', 'awaiting_payment').order('created_at', { ascending: false }).limit(100);
+    const session = await requireAdmin(request);
+    let query = db().from('tweet_orders').select('*').neq('status', 'awaiting_payment');
+    query = session.account.username.toLowerCase() === 'lumenless' ? query.or(`target_x_user_id.eq.${session.account.id},and(target_x_user_id.is.null,target_username.eq.lumenless)`) : query.eq('target_x_user_id', session.account.id);
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(100);
     if (error) throw new ApiError('Could not load moderation queue.', 503);
     return NextResponse.json({ orders: await Promise.all((data || []).map(withMedia)) });
   } catch (error) { return failure(error); }
@@ -45,8 +47,8 @@ export async function POST(request: NextRequest) {
         .eq('id', value.id).eq('status', 'publishing').eq('updated_at', value.updated_at);
       if (result.error) throw new ApiError('Could not recover publication.', 503);
     } else if (body.action === 'confirm-not-published') {
-      if (value.status !== 'publish_uncertain' || body.confirm !== 'I checked @lumenless and this tweet was not published')
-        throw new ApiError('Confirm that the uncertain tweet does not exist on @lumenless.');
+      if (value.status !== 'publish_uncertain' || body.confirm !== `I checked @${value.target_username || 'lumenless'} and this tweet was not published`)
+        throw new ApiError('Confirm that the uncertain tweet does not exist on the target account.');
       const result = await client.from('tweet_orders').update({ status: 'approved', publish_attempt: null, publish_error: null, updated_at: new Date().toISOString() }).eq('id', value.id).eq('status', 'publish_uncertain');
       if (result.error) throw new ApiError('Could not reset publication.', 503);
     } else if (body.action === 'notify') {

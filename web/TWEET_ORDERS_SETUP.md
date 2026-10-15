@@ -1,13 +1,13 @@
 # Lumenless tweet orders
 
-The web homepage now sells posts on **@lumenless**. A single tweet costs **1,000,000 LUMEN**; a thread of **2–5 tweets costs 3,000,000 LUMEN**. Email and Telegram contacts are independently optional. Token mint: `6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM`. Treasury: `LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb`.
+The web homepage sells posts on **@lumenless**. Connected accounts have their own `/u/@username` checkout; see BUSINESS_SETUP.md and apply sql/multi-account.sql after the initial schema. A single tweet costs **1,000,000 LUMEN**; a thread of **2–5 tweets costs 3,000,000 LUMEN**. Email and Telegram contacts are independently optional. Token mint: `6Q5t5upWJwDocysAwR2zertE2EPxB3X1ek1HRoj4LUM`. Treasury: `LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb`.
 
 ## Setup
 
 1. Run `sql/tweet-orders.sql` in the intended Supabase project's SQL editor. It creates private order and OAuth credential tables and a private media bucket. It is a first-install bootstrap script, not an incremental migration. Existing waitlist tables are unaffected.
 2. Add the missing variables from `tweet-orders.env.example` to `web/.env.local` and to the hosting environment. Never prefix service keys, private keys, OAuth credentials or bot tokens with `NEXT_PUBLIC_`. Use a mainnet RPC with transaction history; the server verifies its genesis hash. There is no treasury private key on the server.
-3. Set the Telegram token for **@lumenless_bot** and `TELEGRAM_ADMIN_CHAT_ID=862473`. The recipient must first start the bot. Moderation requires signing in as @lumenless on Business; no admin token is used.
-4. Create a confidential OAuth 2.0 web app in X. Register `BUSINESS_APP_URL/api/business/x/callback` and grant `tweet.read tweet.write users.read media.write offline.access`. Set client ID and secret, sign in as @lumenless on Business and open its moderation queue. Tokens are saved in the private database and renewed by the publisher. `TWEET_ADMIN_TOKEN` is not required. X API access/credits must support these endpoints.
+3. Set the Telegram token for **@lumenless_bot** and `TELEGRAM_ADMIN_CHAT_ID=862473`. The recipient must first start the bot. Moderation requires signing in as the target X account on Business; no admin token is used.
+4. Create a confidential OAuth 2.0 web app in X. Register `BUSINESS_APP_URL/api/business/x/callback` and grant `tweet.read tweet.write users.read media.write offline.access`. Set client ID and secret, sign in with the intended X account on Business and open its own moderation queue. Tokens are saved in the private database and renewed by the publisher. `TWEET_ADMIN_TOKEN` is not required. X API access/credits must support these endpoints.
 5. Set a Jupiter API key. Without it, SOL checkout remains unavailable; LUMEN payments still work. The homepage remains closed for checkout until the core server environment and X connection are present.
 6. The Vercel configuration calls `/api/cron/tweet-orders` every minute with `CRON_SECRET`. The hosting plan must support that schedule and 300-second functions. On other hosts, configure a scheduler that sends `Authorization: Bearer <CRON_SECRET>` to that endpoint. It retries pending Telegram notifications and continues approved posts whose videos are processing.
 7. Run `npm run test:tweet-orders`, `npm run lint`, and `npm run build` in `web/`.

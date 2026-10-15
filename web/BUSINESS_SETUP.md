@@ -1,19 +1,23 @@
-# Lumenless Business
+# Lumenless Business: multiple X accounts
 
-Business connects @lumenless through X OAuth and saves tokens directly to the private Supabase tweet_x_credentials singleton (id=1). The lumenless.com publisher reads that row and refreshes tokens under its existing database lock. No copying tokens into env is required.
+Anyone can connect an X account via Business. OAuth verifies /users/me and stores tokens in the private business_x_accounts table keyed by stable X user ID. Each account receives https://lumenless.com/u/@username. The main homepage remains @lumenless.
 
-Both domains must use the same Supabase project and X app. Required server variables: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, X_CLIENT_ID, X_CLIENT_SECRET, BUSINESS_APP_URL=https://business.lumenless.com, BUSINESS_SESSION_SECRET (64 random hex characters).
+## Upgrade
 
-Register https://business.lumenless.com/api/business/x/callback in X. Local testing uses http://127.0.0.1:3017/api/business/x/callback and BUSINESS_APP_URL=http://127.0.0.1:3017.
+Run sql/multi-account.sql in the existing Supabase project's SQL Editor before deploying this code. It adds the private accounts table and target fields/index on orders; old rows remain intact. Existing tweet-orders.sql is still needed for a fresh installation, followed by multi-account.sql.
 
-Authorize @lumenless. Only after a successful database write does Business show confirmation. Other accounts are rejected before writing. Reconnecting replaces the existing connection. Closing the browser session does not disconnect publishing. No additional SQL is needed if tweet-orders.sql was applied.
+Both domains must share the same Supabase project and X app. Required server env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, X_CLIENT_ID, X_CLIENT_SECRET, BUSINESS_APP_URL=https://business.lumenless.com, BUSINESS_SESSION_SECRET (64 random hex characters). Payment, Telegram and CRON_SECRET variables remain as documented in TWEET_ORDERS_SETUP.md. TWEET_ADMIN_TOKEN and token seed variables are not needed.
 
-The encrypted cookie contains only account and confirmation metadata, never tokens. The retired export endpoint returns HTTP 410 even for old credential cookies. Tokens stay in the private service-role-only table, protected by RLS and revoked anon/authenticated access.
+Callback: https://business.lumenless.com/api/business/x/callback (local: http://127.0.0.1:3017/api/business/x/callback). Register it in the confidential X app with tweet.read, tweet.write, users.read, media.write and offline.access. The app's X access/credits must allow every account that authorizes it.
 
-Future registration for arbitrary accounts requires separate owner-scoped records, not this publisher singleton.
+## Routing and isolation
 
-Run npm run test:business, npm run test:tweet-orders and npm run build. Live OAuth requires the account owner to approve X access; tests never replace production credentials.
+The wallet signs the target username with its order draft. The server resolves that username to a connected account and saves its immutable X ID. Publication and token refresh use that ID, verify /users/me matches it, and cannot fall back to another account's tokens. Changing a username does not reroute existing orders. Reconnect in Business to update the storefront username; if a previously connected username has been reassigned, support must resolve the existing directory conflict before it can be registered again.
 
-## Moderation
+Business sessions are encrypted host-only HttpOnly cookies valid for eight hours and contain only account metadata. Queue queries and every moderation action enforce ownership by X ID. Other accounts cannot read contacts/content, moderate, reconcile, refund or publish another account's orders. Logout clears the session, not the stored publishing connection. Export endpoint remains retired.
 
-After OAuth, open /business/tweets on business.lumenless.com. The eight-hour, host-only HttpOnly session grants moderation only to the verified @lumenless account. Old export-only sessions must sign in again. All queue and action requests use /api/business/tweets, check the Business origin and privileged session; mutations additionally check the Origin header. Signing out clears access but leaves publisher credentials in the database. TWEET_ADMIN_TOKEN is no longer used and can be removed from Vercel. Legacy admin APIs return 410; /admin/tweets redirects to Business. Telegram notifications link to the Business queue. Existing SQL is sufficient.
+Main-account compatibility: old orders with no target ID use the existing @lumenless connection. New @lumenless OAuth connects its new account row and backfills legacy orders to its verified X ID. The publisher prefers that new row so only one credential store owns refresh rotation. The old singleton is retained as fallback until @lumenless reconnects. Do not manually copy its tokens into multiple active records.
+
+Prices remain 1M/3M LUMEN. Payments and refunds still use the existing central treasury. Multi-account payouts, custom pricing and per-account Telegram destinations are not part of this version. Telegram notifications include the target username. A public directory is not exposed; users share their own storefront link from Business.
+
+Run node --test tests/*.test.cjs, npm run build and targeted ESLint. Tests verify account ownership, queue filters, signed targets, token selection and mismatched X ID rejection. Live OAuth and posting require the account owner's approval and real payment; tests never publish.
