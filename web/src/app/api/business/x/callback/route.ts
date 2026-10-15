@@ -4,6 +4,8 @@ import { BusinessFlow, callbackUrl, FLOW_COOKIE, landingUrl, openSession, privat
 
 import { profileImageUrl } from '@/lib/business/accounts';
 
+import { encryptToken, tokenContext } from '@/lib/security/x-token-crypto';
+
 export const runtime = 'nodejs';
 export async function GET(request: NextRequest) {
   const redirect = new URL(landingUrl());
@@ -29,7 +31,7 @@ export async function GET(request: NextRequest) {
     const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
     // The publisher owns refresh rotation; Business only replaces the connection after OAuth.
     const { error: saveError } = await db().from('business_x_accounts').upsert({ x_user_id: data.id, username: data.username.toLowerCase(), name: data.name, profile_image_url: profileImageUrl(data.profile_image_url), updated_at: new Date().toISOString(),
-      access_token: tokens.access_token, refresh_token: tokens.refresh_token,
+      access_token: encryptToken(tokens.access_token, tokenContext('business_x_accounts', data.id, 'access_token')), refresh_token: encryptToken(tokens.refresh_token, tokenContext('business_x_accounts', data.id, 'refresh_token')),
       expires_at: tokenExpiresAt, lock_until: '1970-01-01' });
     if (saveError) throw new Error('save_failed');
     if (data.username.toLowerCase() === 'lumenless') {

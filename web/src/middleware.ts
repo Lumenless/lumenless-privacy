@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export function middleware(request: NextRequest) {
+import { clientIdentity, consumeLimit, requestLimit } from '@/lib/security/rate-limit';
+
+export async function middleware(request: NextRequest) {
+  const policy = requestLimit(request.nextUrl.pathname, request.method);
+  if (policy) { const limited = await consumeLimit(`ip:${clientIdentity(request)}`, policy); if (limited) return limited; }
   const host = (request.headers.get('host') || '').split(':')[0].toLowerCase();
   const path = request.nextUrl.pathname;
   const businessHost = host === 'business.lumenless.com';
@@ -10,7 +14,7 @@ export function middleware(request: NextRequest) {
     const target = request.nextUrl.clone(); target.pathname = path.replace(/^\/u\/(?:@|%40)/i, '/u/');
     return NextResponse.rewrite(target);
   }
-  if (!businessHost && !businessPath) return NextResponse.next();
+  if (!businessHost && !businessPath) { const headers = new Headers(request.headers); headers.delete('Content-Security-Policy'); return NextResponse.next({ request: { headers } }); }
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
   const mediaOrigin = (() => { try { return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').origin; } catch { return ''; } })();
   const csp = `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${mediaOrigin}; media-src 'self' ${mediaOrigin}; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`;

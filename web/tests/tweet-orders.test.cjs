@@ -9,6 +9,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 }).outputText, filename);
 const { PublicKey, Keypair } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } = require('@solana/spl-token');
+process.env.X_TOKEN_ENCRYPTION_KEY = 'cd'.repeat(32);
 const model = require('../src/lib/tweet-orders/model.ts');
 const payments = require('../src/lib/tweet-orders/payments.ts');
 const server = require('../src/lib/tweet-orders/server.ts');
@@ -168,4 +169,13 @@ test('Paid Partnership applies to every thread post and its snapshot survives se
  global.fetch=async(url,init)=>{if(url.endsWith('/users/me'))return response({data:{id:'777',username:'mike'}});bodies.push(JSON.parse(init.body));return response({data:{id:String(bodies.length)}});};
  await publish(row.id);assert.equal(row.paid_partnership,expected);assert.equal(bodies.length,2);for(const body of bodies)assert.equal(body.paid_partnership,expected);
  }}finally{server.db=oldDb;global.fetch=oldFetch;}
+});
+test('refresh decrypts only its account token and persists the rotated pair encrypted',async()=>{
+ const crypto=require('../src/lib/security/x-token-crypto.ts');const ctx=f=>crypto.tokenContext('business_x_accounts','777',f);
+ const credentials={x_user_id:'777',access_token:crypto.encryptToken('old-access',ctx('access_token')),refresh_token:crypto.encryptToken('old-refresh',ctx('refresh_token')),expires_at:'1970-01-01',lock_until:'1970-01-01'};
+ const row={...structuredClone(base),status:'approved',target_x_user_id:'777',target_username:'mike'};const oldDb=server.db,oldFetch=global.fetch;
+ const oldId=process.env.X_CLIENT_ID,oldSecret=process.env.X_CLIENT_SECRET;process.env.X_CLIENT_ID='test-id';process.env.X_CLIENT_SECRET='test-secret';
+ server.db=()=>({from(table){let patch,expected;const chain={select(){return chain},eq(field,value){if(field==='status')expected=value;if(field==='x_user_id')assert.equal(value,'777');return chain},lt(){return chain},update(value){patch=value;return chain},async maybeSingle(){if(table==='business_x_accounts'){if(patch)Object.assign(credentials,patch);return {data:structuredClone(credentials)}}if(expected&&row.status!==expected)return {data:null};if(patch)Object.assign(row,structuredClone(patch));return {data:structuredClone(row)}}};return chain;}});
+ global.fetch=async(url,init)=>{if(url.endsWith('/oauth2/token')){assert.equal(init.body.get('refresh_token'),'old-refresh');return response({access_token:'new-access',refresh_token:'new-refresh',expires_in:7200})}assert.equal(init.headers.Authorization,'Bearer new-access');return url.endsWith('/users/me')?response({data:{id:'777',username:'mike'}}):response({data:{id:'555'}});};
+ try{await publish(row.id);assert.equal(row.status,'published');assert.ok(credentials.access_token.startsWith('xenc:v1:'));assert.equal(crypto.decryptToken(credentials.refresh_token,ctx('refresh_token')),'new-refresh');assert.equal(crypto.decryptToken(credentials.access_token,ctx('access_token')),'new-access');}finally{server.db=oldDb;global.fetch=oldFetch;if(oldId)process.env.X_CLIENT_ID=oldId;else delete process.env.X_CLIENT_ID;if(oldSecret)process.env.X_CLIENT_SECRET=oldSecret;else delete process.env.X_CLIENT_SECRET;}
 });

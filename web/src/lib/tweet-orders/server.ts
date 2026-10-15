@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { MEDIA_BUCKET, TweetOrder } from './model';
 
-export class ApiError extends Error { constructor(message: string, public status = 400) { super(message); } }
+export class ApiError extends Error { constructor(message: string, public status = 400, public retryAfter?: number) { super(message); } }
 export function env(name: string) {
   const value = process.env[name];
   if (!value) throw new ApiError(`Service unavailable: ${name} is not configured.`, 503);
@@ -30,6 +30,9 @@ export async function requireAdmin(request: NextRequest) {
   const session = openSession<import('../business/session').BusinessSession>(request.cookies.get(SESSION_COOKIE)?.value, 'credentials');
   if (!session?.moderation || !session.persisted || !/^\d+$/.test(session.account.id))
     throw new ApiError('Sign in to Lumenless Business with X.', 401);
+  const { consumeLimit } = await import('../security/rate-limit');
+  const limited = await consumeLimit(`account:${session.account.id}`, { name: request.method === 'GET' ? 'account-read' : 'account-write', limit: request.method === 'GET' ? 240 : 120, seconds: 60 });
+  if (limited) throw new ApiError(limited.status === 429 ? 'Too many requests. Please retry shortly.' : 'Security service is temporarily unavailable.', limited.status, Number(limited.headers.get('Retry-After') || '10'));
   return session;
 }
 export function accountOwnsOrder(account: { id: string; username: string }, value: Pick<TweetOrder, 'target_x_user_id' | 'target_username'>) {
@@ -56,7 +59,7 @@ export async function withMedia(value: TweetOrder) {
   return { ...safe, tweets };
 }
 export function failure(error: unknown) {
-  if (error instanceof ApiError) return NextResponse.json({ error: error.message }, { status: error.status });
+  if (error instanceof ApiError) return NextResponse.json({ error: error.message }, { status: error.status, headers: error.retryAfter ? { 'Retry-After': String(error.retryAfter), 'Cache-Control': 'no-store' } : undefined });
   return NextResponse.json({ error: 'The request failed. Please try again.' }, { status: 500 });
 }
 export async function notify(value: TweetOrder) {

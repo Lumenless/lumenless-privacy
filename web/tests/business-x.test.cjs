@@ -7,6 +7,9 @@ const assert = require('node:assert/strict');
 require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText, filename);
 const resolve = Module._resolveFilename;
 Module._resolveFilename = function(request, ...args) { return resolve.call(this, request.startsWith('@/') ? path.join(__dirname, '../src', request.slice(2)) : request, ...args); };
+process.env.X_TOKEN_ENCRYPTION_KEY = 'cd'.repeat(32);
+const cryptoTokens = require('../src/lib/security/x-token-crypto.ts');
+require('../src/lib/security/rate-limit.ts').consumeLimit = async () => null;
 process.env.BUSINESS_SESSION_SECRET = 'ab'.repeat(32);
 process.env.BUSINESS_APP_URL = 'http://127.0.0.1:3017';
 process.env.X_CLIENT_ID = 'example-client-id';
@@ -66,7 +69,7 @@ test('callback accepts the authenticated X account and binds returned credential
   return Response.json({data:{id:'999',username:'lumenless',name:'Any User',profile_image_url:'https://pbs.twimg.com/profile_images/avatar.jpg'}});
  };
  try{const response=await callback.GET(new NextRequest(origin+'/api/business/x/callback?code=valid&state=valid-state',{headers:{cookie:cookie(flow,sessions.FLOW_COOKIE)}}));
-  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.equal(saved.refresh_token,'account-refresh');assert.equal(saved.x_user_id,'999');assert.equal(saved.profile_image_url,'https://pbs.twimg.com/profile_images/avatar.jpg');assert.equal(session.persisted,true);assert.equal(session.refreshToken,undefined);assert.equal(session.accessToken,undefined);
+  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.ok(saved.refresh_token.startsWith('xenc:v1:'));assert.equal(cryptoTokens.decryptToken(saved.refresh_token,cryptoTokens.tokenContext('business_x_accounts','999','refresh_token')),'account-refresh');assert.equal(saved.x_user_id,'999');assert.equal(saved.profile_image_url,'https://pbs.twimg.com/profile_images/avatar.jpg');assert.equal(session.persisted,true);assert.equal(session.refreshToken,undefined);assert.equal(session.accessToken,undefined);
   assert.equal(response.cookies.get(sessions.FLOW_COOKIE).value,'');assert.ok(!response.headers.get('location').includes('account-refresh'));
  }finally{global.fetch=original;}
 });
@@ -128,10 +131,10 @@ test('moderation queue filters by the signed-in X user ID',async()=>{
  try{const response=await queue.GET(req('tweets','GET',cookie({...credentials,account:{id:'777',username:'heymike777',name:'Mike'}})));assert.equal(response.status,200);assert.equal(accountFilter,'777');assert.deepEqual((await response.json()).orders,[]);}finally{server.db=original;}
 });
 
-test('public storefront @ handles rewrite to the dynamic username route',()=>{
+test('public storefront @ handles rewrite to the dynamic username route',async()=>{
  const {middleware}=require('../src/middleware.ts');
  for(const handle of ['@lumenless','%40heymike777']){
- const response=middleware(new NextRequest('https://lumenless.com/u/'+handle,{headers:{host:'lumenless.com'}}));
+ const response=await middleware(new NextRequest('https://lumenless.com/u/'+handle,{headers:{host:'lumenless.com'}}));
  assert.equal(new URL(response.headers.get('x-middleware-rewrite')).pathname,handle.includes('lumenless')?'/u/lumenless':'/u/heymike777');
  }
 });

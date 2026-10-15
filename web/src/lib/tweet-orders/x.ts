@@ -1,6 +1,8 @@
 import { MEDIA_BUCKET, TweetOrder } from './model';
 import { ApiError, db, env } from './server';
 
+import { decryptToken, encryptToken, tokenContext } from '../security/x-token-crypto';
+
 class XError extends ApiError { constructor(message: string, public uncertain = false) { super(message, 502); } }
 async function accessToken(value: TweetOrder) {
   const client = db();
@@ -15,7 +17,7 @@ async function accessToken(value: TweetOrder) {
   const initial = table === 'business_x_accounts' ? current : await client.from(table).select('*').eq(key, credentialId).maybeSingle();
   const data = initial.data;
   if (initial.error || !data) throw new ApiError('X connection is unavailable. Reconnect in Business.', 503);
-  if (Date.parse(data.expires_at) > Date.now() + 120_000) return { token: data.access_token as string, paidPartnership: data.paid_partnership !== false };
+  if (Date.parse(data.expires_at) > Date.now() + 120_000) return { token: decryptToken(data.access_token, tokenContext(table, credentialId, 'access_token')), paidPartnership: data.paid_partnership !== false };
   const lock = new Date(Date.now() + 60_000).toISOString();
   const acquired = await client.from(table).update({ lock_until: lock }).eq(key, credentialId).lt('lock_until', new Date().toISOString()).select().maybeSingle();
   if (acquired.error || !acquired.data) throw new ApiError('X authorization is refreshing. Retry shortly.', 409);
@@ -24,14 +26,14 @@ async function accessToken(value: TweetOrder) {
       method: 'POST', signal: AbortSignal.timeout(20_000), headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         Authorization: `Basic ${Buffer.from(`${encodeURIComponent(env('X_CLIENT_ID'))}:${encodeURIComponent(env('X_CLIENT_SECRET'))}`).toString('base64')}`,
-      }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: acquired.data.refresh_token }),
+      }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: decryptToken(acquired.data.refresh_token, tokenContext(table, credentialId, 'refresh_token')) }),
     });
     if (!response.ok) throw new ApiError('X authorization expired or was revoked. Reconnect the account in Business.', 503);
     const refreshed = await response.json();
     if (!refreshed.access_token || !refreshed.refresh_token || !refreshed.expires_in) throw new ApiError('X returned invalid credentials.', 503);
-    const saved = await client.from(table).update({ access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token, expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(), lock_until: '1970-01-01' }).eq(key, credentialId).eq('lock_until', lock);
-    if (saved.error) throw new ApiError('Could not persist rotated X credentials. Reconnect the account in Business.', 503);
+    const saved = await client.from(table).update({ access_token: encryptToken(refreshed.access_token, tokenContext(table, credentialId, 'access_token')),
+      refresh_token: encryptToken(refreshed.refresh_token, tokenContext(table, credentialId, 'refresh_token')), expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(), lock_until: '1970-01-01' }).eq(key, credentialId).eq('lock_until', lock).select(key).maybeSingle();
+    if (saved.error || !saved.data) throw new ApiError('Could not persist rotated X credentials. Reconnect the account in Business.', 503);
     return { token: refreshed.access_token as string, paidPartnership: data.paid_partnership !== false };
   } finally {
     await client.from(table).update({ lock_until: '1970-01-01' }).eq(key, credentialId).eq('lock_until', lock);

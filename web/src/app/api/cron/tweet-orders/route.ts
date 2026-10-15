@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   try {
     if (!same(request.headers.get('authorization') || '', `Bearer ${env('CRON_SECRET')}`)) throw new ApiError('Unauthorized.', 401);
     const client = db();
+    await client.rpc('prune_api_rate_limits');
     const notifications = await client.from('tweet_orders').select('*').not('payment_signature', 'is', null).is('notification_sent_at', null).limit(5);
     const publications = await client.from('tweet_orders').select('id').eq('status', 'approved').order('created_at').limit(1);
     if (notifications.error || publications.error) throw new ApiError('Queue unavailable.', 503);
