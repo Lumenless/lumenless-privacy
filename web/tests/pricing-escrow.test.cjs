@@ -45,3 +45,12 @@ test('missing or successful settlement history cannot unlock a second payout',as
  payments.mainnetRpc=async()=>({getSignatureStatuses:async()=>({value:[status]}),getBlockHeight:async()=>99999});
  try{const row={settlement_signature:'signed',settlement_last_valid_height:1};await assert.rejects(escrow.resetSettlement(row),/cannot prove/);status={confirmationStatus:'finalized',err:null};await assert.rejects(escrow.resetSettlement(row),/Verify the pending/);}finally{payments.mainnetRpc=original;}
 });
+
+test('RPC errors fail promptly without rate-limit retries or endpoint secrets',async()=>{
+ const oldFetch=global.fetch,oldRpc=process.env.SOLANA_MAINNET_RPC_URL;let calls=0;
+ process.env.SOLANA_MAINNET_RPC_URL='https://example.invalid/private-key';
+ global.fetch=async(_url,init)=>{calls++;assert.ok(init.signal instanceof AbortSignal);return new Response('limited',{status:429});};
+ try{await assert.rejects(payments.mainnetRpc(),error=>error.status===503&&!error.message.includes('private-key'));assert.equal(calls,1);
+ global.fetch=async()=>{throw Error('network error https://example.invalid/private-key');};await assert.rejects(payments.mainnetRpc(),error=>error.status===503&&!error.message.includes('private-key'));
+ }finally{global.fetch=oldFetch;if(oldRpc===undefined)delete process.env.SOLANA_MAINNET_RPC_URL;else process.env.SOLANA_MAINNET_RPC_URL=oldRpc;}
+});

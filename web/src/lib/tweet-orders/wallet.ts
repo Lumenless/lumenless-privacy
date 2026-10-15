@@ -40,10 +40,16 @@ export function walletProvider(name: string): WalletProvider {
 export function fromBase64(value: string) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
 export function toBase64(value: Uint8Array) { return btoa(Array.from(value, byte => String.fromCharCode(byte)).join('')); }
 export async function jsonRequest(url: string, init: RequestInit = {}) {
-  const response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Request failed. Please retry.');
-  return result;
+  try {
+    const response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Request failed. Please retry.');
+    return result;
+  } catch (error) {
+    if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
+      throw new Error('The request timed out. If you signed a payment, verify the existing payment before trying another.');
+    throw error;
+  }
 }
 
 // A late message signature must never resume order creation after the UI timed out.

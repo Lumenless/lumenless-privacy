@@ -39,13 +39,13 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   const [quote, setQuote] = useState<{ transaction: string; inLamports: string; networkFeeLamports: number } | null>(null);
   function remember(value: Recovery) { setSaved(value); localStorage.setItem(storage, JSON.stringify(value)); }
   async function load(value: Recovery) {
-    const result = await jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token } });
+    const result = await jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) });
     setOrder(result); if (result.payment_signed_signature && !value.signature) remember({ ...value, signature: result.payment_signed_signature }); return result as TweetOrder;
   }
   useEffect(() => {
     jsonRequest(`/api/tweet-orders/config?username=${encodeURIComponent(username)}`).then(setConfig).catch(() => setError('Could not check payment availability. Reload this page.'));
     const previous = localStorage.getItem(storage) || (username === 'lumenless' ? localStorage.getItem('lumenless-tweet-order') : null);
-    if (previous) { try { const value = JSON.parse(previous); setSaved(value); jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token } }).then(result => { setOrder(result); if (result.payment_signed_signature && !value.signature) { const recovered = { ...value, signature: result.payment_signed_signature }; setSaved(recovered); localStorage.setItem(storage, JSON.stringify(recovered)); } }).catch((err: Error) => setError(err.message)); } catch { localStorage.removeItem(storage); } }
+    if (previous) { try { const value = JSON.parse(previous); setSaved(value); jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) }).then(result => { setOrder(result); if (result.payment_signed_signature && !value.signature) { const recovered = { ...value, signature: result.payment_signed_signature }; setSaved(recovered); localStorage.setItem(storage, JSON.stringify(recovered)); } }).catch((err: Error) => setError(err.message)); } catch { localStorage.removeItem(storage); } }
   }, [storage, username]);
   async function run(label: string, task: () => Promise<void>) {
     setBusy(label); setError(''); try { await task(); } catch (err) { if (!(err instanceof Error && err.message === 'Wallet connection cancelled.')) setError(err instanceof Error ? err.message : 'Something went wrong. Retry.'); } finally { setBusy(''); }
@@ -79,7 +79,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
     setBusy('Getting a SOL quote…'); setQuote(await action(value, { action: 'swap-quote', maxSol: option.maxSol }));
   }
   async function action(value: Recovery, body: Record<string, unknown>) {
-    return jsonRequest(`/api/tweet-orders/${value.id}`, { method: 'POST', headers: { 'x-order-token': value.token }, body: JSON.stringify(body) });
+    return jsonRequest(`/api/tweet-orders/${value.id}`, { method: 'POST', headers: { 'x-order-token': value.token }, body: JSON.stringify(body), signal: AbortSignal.timeout(25_000) });
   }
   async function create() {
     if (!config?.billing) throw new Error('Reload pricing before creating an order.');
@@ -92,12 +92,12 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
     const signed = await authorizeOrderMessage(provider, new TextEncoder().encode(signingMessage(draft, timestamp, nonce)));
     setBusy('Saving your content…');
     const signature = bs58.encode(signed instanceof Uint8Array ? signed : signed.signature);
-    const value = await jsonRequest('/api/tweet-orders', { method: 'POST', body: JSON.stringify({ draft, timestamp, nonce, signature }) });
+    const value = await jsonRequest('/api/tweet-orders', { method: 'POST', body: JSON.stringify({ draft, timestamp, nonce, signature }), signal: AbortSignal.timeout(25_000) });
     const recovery = { id: value.id, token: value.token }; remember(recovery);
     let index = 0;
     for (const post of posts) for (const file of post.files) {
       setBusy(`Uploading ${file.name}…`);
-      const response = await fetch(value.uploads[index++].url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      const response = await fetch(value.uploads[index++].url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file, signal: AbortSignal.timeout(120_000) });
       if (!response.ok) throw new Error(`Could not upload ${file.name}. Discard the unpaid order and retry.`);
     }
     await load(recovery);

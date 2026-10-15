@@ -7,7 +7,18 @@ import { LUMEN_MINT, TweetOrder } from './model';
 import { orderTerms, orderAtomic } from './billing';
 export const TREASURY = 'LUMthMRYXEvkekVVLkwMQr92huNK5x5jZGSQzpmCUjb';
 const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-export function rpc() { return new Connection(env('SOLANA_MAINNET_RPC_URL'), 'finalized'); }
+export function rpc() {
+  return new Connection(env('SOLANA_MAINNET_RPC_URL'), {
+    commitment: 'finalized', disableRetryOnRateLimit: true,
+    fetch: async (url, init) => {
+      try {
+        const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new ApiError('Solana RPC is unavailable. Retry this order shortly.', 503);
+        return response;
+      } catch { throw new ApiError('Solana RPC did not respond in time. Retry this order shortly.', 503); }
+    },
+  });
+}
 export async function mainnetRpc() {
   const connection = rpc();
   if (await connection.getGenesisHash() !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d') throw new ApiError('The payment RPC must connect to Solana mainnet.', 503);
