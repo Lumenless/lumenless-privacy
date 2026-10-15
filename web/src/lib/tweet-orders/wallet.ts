@@ -16,6 +16,7 @@ export function walletProvider(name: string): WalletProvider {
     if (!wallet || !isWalletAdapterCompatibleStandardWallet(wallet)) throw new Error('Install Jupiter Wallet or open this page in its browser.');
     const adapter = new StandardWalletAdapter({ wallet });
     return {
+      get publicKey() { return adapter.publicKey || undefined; },
       async connect() {
         await adapter.connect();
         if (!adapter.publicKey) throw new Error('Jupiter Wallet did not return an account.');
