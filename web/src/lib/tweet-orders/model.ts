@@ -33,7 +33,7 @@ export const draftSchema = z.object({
 });
 export type Draft = z.infer<typeof draftSchema>;
 export type TweetOrder = {
-  id: string; target_x_user_id?: string | null; target_username?: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
+  id: string; paid_partnership?: boolean | null; target_x_user_id?: string | null; target_username?: string; wallet: string; kind: Draft['kind']; tweets: Array<{ text: string; media: Array<z.infer<typeof mediaSchema> & { path: string; url?: string }> }>;
   email: string | null; telegram: string | null; amount_tokens: number;
   status: 'awaiting_payment' | 'pending_review' | 'approved' | 'publishing' | 'publish_failed' | 'publish_uncertain' | 'published' | 'rejected' | 'refund_pending' | 'refunded';
   payment_signature: string | null; refund_signature: string | null;

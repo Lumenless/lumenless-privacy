@@ -21,3 +21,9 @@ Main-account compatibility: old orders with no target ID use the existing @lumen
 Prices remain 1M/3M LUMEN. Payments and refunds still use the existing central treasury. Multi-account payouts, custom pricing and per-account Telegram destinations are not part of this version. Telegram notifications include the target username. A public directory is not exposed; users share their own storefront link from Business.
 
 Run node --test tests/*.test.cjs, npm run build and targeted ESLint. Tests verify account ownership, queue filters, signed targets, token selection and mismatched X ID rejection. Live OAuth and posting require the account owner's approval and real payment; tests never publish.
+
+## Paid Partnership
+
+Apply sql/paid-partnership.sql after the multi-account upgrade. Business Publishing settings lets each authenticated account enable/disable X’s Paid Partnership label. Default is enabled. The server reads the preference from that account’s private credential record; it snapshots the boolean on the order when publication begins, sends paid_partnership for every post, and preserves the snapshot across retries and thread continuations. Existing published posts are not edited. Settings endpoints require the same owner session and same-origin writes.
+
+Reference: https://docs.x.com/x-api/posts/manage-tweets/introduction

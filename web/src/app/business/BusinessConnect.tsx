@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { ArrowUpRight, Check, KeyRound, ShieldCheck } from 'lucide-react';
+import PublishingSettings from './PublishingSettings';
 import { Button } from '@/components/ui/button';
 import { jsonRequest } from '@/lib/tweet-orders/wallet';
 
@@ -53,6 +54,7 @@ export default function BusinessConnect() {
           <div role="status" className="my-6 flex gap-3 rounded-xl bg-muted p-4 text-sm leading-relaxed"><Check size={20} className="shrink-0 text-primary" /><p>Connection saved. Lumenless can now publish approved posts and renew access automatically.</p></div>
           <p className="text-xs leading-relaxed text-muted-foreground">Your publishing connection stays active after signing out.</p>
           <a href={`https://lumenless.com/u/@${session.account.username}`} target="_blank" rel="noreferrer" className="mt-5 block break-all text-sm text-primary underline">Open your order page ↗</a><p className="mt-2 break-all font-mono text-xs text-muted-foreground">lumenless.com/u/@{session.account.username}</p><a href="/business/tweets" className="mt-5 block rounded-xl bg-primary px-4 py-3 text-center font-medium text-primary-foreground">Open moderation queue</a><div className="mt-5 flex flex-wrap gap-3"><Button variant="outline" disabled={!!busy} onClick={() => run('Connecting X…', connect)}>Switch / reconnect account</Button><Button variant="ghost" disabled={!!busy} onClick={() => run('Closing session…', async () => { await jsonRequest('/api/business/x/logout', { method: 'POST' }); await refresh(); })}>Sign out</Button></div>
+          <PublishingSettings key={session.account.id} />
         </> : <><h2 className="text-2xl font-semibold">Connect your X account</h2><p className="mt-3 text-sm leading-relaxed text-muted-foreground">Authorize directly on X. We never ask for your X password.</p>
           <Button className="mt-7 h-12 w-full" disabled={!session?.configured || !!busy} onClick={() => run('Opening X…', connect)}>{busy || 'Continue with X'}</Button>
           {!session ? <p role="status" className="mt-4 text-sm text-muted-foreground">Checking connection settings…</p> : !session.configured && <p role="status" className="mt-4 rounded-xl bg-muted p-4 text-sm text-muted-foreground">X authorization is being configured. This page will be ready once the app credentials are added.</p>}

@@ -135,3 +135,16 @@ test('public storefront @ handles rewrite to the dynamic username route',()=>{
  assert.equal(new URL(response.headers.get('x-middleware-rewrite')).pathname,handle.includes('lumenless')?'/u/lumenless':'/u/heymike777');
  }
 });
+test('publishing settings are private, validate booleans and update only the session account',async()=>{
+ const settings=require('../src/app/api/business/settings/route.ts');const original=server.db;let selection,patch;
+ server.db=()=>({from(table){assert.equal(table,'business_x_accounts');const chain={select(fields){assert.equal(fields,'paid_partnership');return chain},eq(field,id){assert.equal(field,'x_user_id');selection=id;return chain},update(value){patch=value;return chain},async maybeSingle(){return {data:{paid_partnership:patch?patch.paid_partnership:true}}}};return chain;}});
+ const session={...credentials,account:{id:'777',username:'heymike777',name:'Mike'}};
+ const request=body=>new NextRequest(origin+'/api/business/settings',{method:'POST',headers:{host:new URL(origin).host,origin,cookie:cookie(session),'content-type':'application/json'},body:JSON.stringify(body)});
+ try{
+ assert.equal((await settings.GET(req('settings','GET'))).status,401);
+ assert.equal((await settings.POST(req('settings','POST',cookie(session),'https://evil.example'))).status,403);
+ const response=await settings.GET(req('settings','GET',cookie(session)));assert.equal((await response.json()).paidPartnership,true);assert.equal(selection,'777');
+ assert.equal((await settings.POST(request({paidPartnership:'false'}))).status,400);
+ assert.equal((await (await settings.POST(request({paidPartnership:false}))).json()).paidPartnership,false);assert.equal(selection,'777');assert.equal(patch.paid_partnership,false);
+ }finally{server.db=original;}
+});

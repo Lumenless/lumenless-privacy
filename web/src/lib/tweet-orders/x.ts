@@ -15,7 +15,7 @@ async function accessToken(value: TweetOrder) {
   const initial = table === 'business_x_accounts' ? current : await client.from(table).select('*').eq(key, credentialId).maybeSingle();
   const data = initial.data;
   if (initial.error || !data) throw new ApiError('X connection is unavailable. Reconnect in Business.', 503);
-  if (Date.parse(data.expires_at) > Date.now() + 120_000) return data.access_token as string;
+  if (Date.parse(data.expires_at) > Date.now() + 120_000) return { token: data.access_token as string, paidPartnership: data.paid_partnership !== false };
   const lock = new Date(Date.now() + 60_000).toISOString();
   const acquired = await client.from(table).update({ lock_until: lock }).eq(key, credentialId).lt('lock_until', new Date().toISOString()).select().maybeSingle();
   if (acquired.error || !acquired.data) throw new ApiError('X authorization is refreshing. Retry shortly.', 409);
@@ -32,7 +32,7 @@ async function accessToken(value: TweetOrder) {
     const saved = await client.from(table).update({ access_token: refreshed.access_token,
       refresh_token: refreshed.refresh_token, expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(), lock_until: '1970-01-01' }).eq(key, credentialId).eq('lock_until', lock);
     if (saved.error) throw new ApiError('Could not persist rotated X credentials. Reconnect the account in Business.', 503);
-    return refreshed.access_token as string;
+    return { token: refreshed.access_token as string, paidPartnership: data.paid_partnership !== false };
   } finally {
     await client.from(table).update({ lock_until: '1970-01-01' }).eq(key, credentialId).eq('lock_until', lock);
   }
@@ -85,10 +85,10 @@ export async function publish(id: string) {
   // A persisted intent marker precedes each POST. Unknown outcomes require reconciliation, never blind retries.
   const target = await db().from('tweet_orders').select('*').eq('id', id).maybeSingle();
   if (target.error || !target.data) throw new ApiError('Order not found.', 404);
-  const token = await accessToken(target.data);
+  const { token, paidPartnership } = await accessToken(target.data);
   const account = await xFetch('/users/me', token);
   if (target.data.target_x_user_id ? account.data?.id !== target.data.target_x_user_id : account.data?.username?.toLowerCase() !== 'lumenless') throw new ApiError('The X connection does not match this order.', 503);
-  const { data, error } = await db().from('tweet_orders').update({ status: 'publishing', updated_at: new Date().toISOString(), publish_error: null })
+  const { data, error } = await db().from('tweet_orders').update({ paid_partnership: target.data.paid_partnership ?? paidPartnership, status: 'publishing', updated_at: new Date().toISOString(), publish_error: null })
     .eq('id', id).eq('status', 'approved').select().maybeSingle();
   if (error || !data) throw new ApiError('This order is already publishing or is not approved.', 409);
   const value = data as TweetOrder;
@@ -102,7 +102,7 @@ export async function publish(id: string) {
       }
       await save(value, { publish_attempt: index });
       const result = await xFetch('/tweets', token, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: tweet.text || undefined, ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}),
+        body: JSON.stringify({ paid_partnership: value.paid_partnership, text: tweet.text || undefined, ...(mediaIds.length ? { media: { media_ids: mediaIds } } : {}),
           ...(index ? { reply: { in_reply_to_tweet_id: value.published_ids[index - 1] } } : {}) }) }, true);
       if (!/^\d+$/.test(result.data?.id || '')) throw new XError('X returned no post ID. Check the target X account before retrying.', true);
       value.published_ids.push(result.data.id);
@@ -120,7 +120,7 @@ export async function reconcile(value: TweetOrder, postId: string) {
   if (value.status !== 'publish_uncertain' || value.publish_attempt !== value.published_ids.length)
     throw new ApiError('This order does not need reconciliation.', 409);
   if (!/^\d{1,30}$/.test(postId)) throw new ApiError('Enter the published X post ID.');
-  const token = await accessToken(value);
+  const { token } = await accessToken(value);
   const account = await xFetch('/users/me', token);
   const post = await xFetch(`/tweets/${postId}?tweet.fields=author_id,referenced_tweets`, token);
   const index = value.published_ids.length;

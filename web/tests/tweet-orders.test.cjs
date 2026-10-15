@@ -160,3 +160,12 @@ test('a disconnected target account never falls back to the lumenless credential
  try{await assert.rejects(publish(row.id),/connection is unavailable/);assert.equal(row.status,'approved');assert.deepEqual(row.published_ids,[]);}
  finally{server.db=oldDb;global.fetch=oldFetch;}
 });
+test('Paid Partnership applies to every thread post and its snapshot survives setting changes',async()=>{
+ const oldDb=server.db,oldFetch=global.fetch;
+ try{for(const [setting,snapshot,expected] of [[true,null,true],[false,null,false],[false,true,true],[true,false,false]]){
+ const row={...structuredClone(base),status:'approved',target_x_user_id:'777',target_username:'mike',paid_partnership:snapshot,tweets:[{text:'first',media:[]},{text:'second',media:[]}]};
+ server.db=mockDb(row,{x_user_id:'777',access_token:'token',expires_at:new Date(Date.now()+3600000).toISOString(),paid_partnership:setting});const bodies=[];
+ global.fetch=async(url,init)=>{if(url.endsWith('/users/me'))return response({data:{id:'777',username:'mike'}});bodies.push(JSON.parse(init.body));return response({data:{id:String(bodies.length)}});};
+ await publish(row.id);assert.equal(row.paid_partnership,expected);assert.equal(bodies.length,2);for(const body of bodies)assert.equal(body.paid_partnership,expected);
+ }}finally{server.db=oldDb;global.fetch=oldFetch;}
+});
