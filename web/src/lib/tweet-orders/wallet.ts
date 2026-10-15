@@ -1,5 +1,9 @@
 'use client';
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
+import { getWallets } from '@wallet-standard/app';
+import { StandardWalletAdapter } from '@solana/wallet-standard-wallet-adapter';
+import { isWalletAdapterCompatibleStandardWallet } from '@solana/wallet-adapter-base';
+export const WALLET_NAMES = ['Phantom', 'Solflare', 'Backpack', 'Jupiter'] as const;
 export type WalletProvider = {
   publicKey?: PublicKey;
   connect(): Promise<{ publicKey: PublicKey }>;
@@ -7,6 +11,26 @@ export type WalletProvider = {
   signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T>;
 };
 export function walletProvider(name: string): WalletProvider {
+  if (name === 'Jupiter') {
+    const wallet = getWallets().get().find(wallet => wallet.name === 'Jupiter' && isWalletAdapterCompatibleStandardWallet(wallet));
+    if (!wallet || !isWalletAdapterCompatibleStandardWallet(wallet)) throw new Error('Install Jupiter Wallet or open this page in its browser.');
+    const adapter = new StandardWalletAdapter({ wallet });
+    return {
+      async connect() {
+        await adapter.connect();
+        if (!adapter.publicKey) throw new Error('Jupiter Wallet did not return an account.');
+        return { publicKey: adapter.publicKey };
+      },
+      async signMessage(message) {
+        if (!adapter.signMessage) throw new Error('Jupiter Wallet does not support message signing.');
+        return adapter.signMessage(message);
+      },
+      async signTransaction(transaction) {
+        if (!adapter.signTransaction) throw new Error('Jupiter Wallet does not support transaction signing.');
+        return adapter.signTransaction(transaction);
+      },
+    };
+  }
   const browser = window as unknown as { phantom?: { solana?: WalletProvider }; solflare?: WalletProvider; backpack?: WalletProvider };
   const provider = name === 'Solflare' ? browser.solflare : name === 'Backpack' ? browser.backpack : browser.phantom?.solana;
   if (!provider) throw new Error(`Open this page in ${name}'s browser or install its wallet extension.`);

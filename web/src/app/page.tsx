@@ -7,7 +7,7 @@ import bs58 from 'bs58';
 import { Check, Copy } from 'lucide-react';
 import parseTweet from 'twitter-text/dist/parseTweet';
 import { draftSchema, LUMEN_MINT, price, signingMessage, TweetOrder } from '@/lib/tweet-orders/model';
-import { fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
+import { WALLET_NAMES, fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
 import { Button } from '@/components/ui/button';
 
 type Post = { text: string; files: File[] };
@@ -157,7 +157,7 @@ export default function Home() {
     </main>
     <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); closeWalletPicker(); }} onClick={event => { if (event.target === event.currentTarget) closeWalletPicker(); }} aria-labelledby="wallet-dialog-title" className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-sm rounded-2xl border border-border bg-background p-6 text-foreground shadow-xl backdrop:bg-black/40">
       <div className="mb-5 flex items-center justify-between"><h2 id="wallet-dialog-title" className="text-xl font-semibold">Connect Wallet</h2><Button variant="ghost" aria-label="Close wallet selection" onClick={closeWalletPicker}>✕</Button></div>
-      <p className="mb-5 text-sm text-muted-foreground">Choose your Solana wallet.</p><div className="space-y-3">{['Phantom', 'Solflare', 'Backpack'].map(name => <Button key={name} variant="outline" className="h-12 w-full justify-start" disabled={selectingWallet} onClick={() => selectWallet(name)}>{name}</Button>)}</div>
+      <p className="mb-5 text-sm text-muted-foreground">Choose your Solana wallet.</p><div className="space-y-3">{WALLET_NAMES.map(name => <Button key={name} variant="outline" className="h-12 w-full justify-start" disabled={selectingWallet} onClick={() => selectWallet(name)}>{name}</Button>)}</div>
       {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
     </dialog>
     <footer className="mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-border px-6 py-6 text-xs text-muted-foreground"><span>© {new Date().getFullYear()} Lumenless</span><div className="flex gap-6"><a href="/privacypolicy">Privacy</a><a href="/admin/tweets">Admin</a></div></footer>
