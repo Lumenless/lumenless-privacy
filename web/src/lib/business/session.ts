@@ -9,7 +9,7 @@ export const SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'media.write',
 export type BusinessSession = {
   type: 'credentials'; expires: number;
   account: { id: string; username: string; name: string };
-  accessToken: string; refreshToken: string; tokenExpiresAt: string; scope: string;
+  tokenExpiresAt: string; persisted: true;
 };
 export type BusinessFlow = { type: 'oauth'; expires: number; state: string; verifier: string };
 
@@ -59,9 +59,4 @@ export function privateResponse(response: NextResponse) {
   response.headers.set('Referrer-Policy', 'no-referrer');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   return response;
-}
-export function envExport(session: BusinessSession) {
-  const entry = (name: string, value: string) => `${name}=${JSON.stringify(value)}`;
-  return [entry('X_CLIENT_ID', env('X_CLIENT_ID')), entry('X_ACCESS_TOKEN', session.accessToken),
-    entry('X_REFRESH_TOKEN', session.refreshToken), entry('X_TOKEN_EXPIRES_AT', session.tokenExpiresAt)].join('\n');
 }

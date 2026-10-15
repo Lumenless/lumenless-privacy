@@ -14,12 +14,15 @@ process.env.X_CLIENT_SECRET = 'example-app-secret';
 const { NextRequest } = require('next/server');
 const sessions = require('../src/lib/business/session.ts');
 const start = require('../src/app/api/business/x/start/route.ts');
+const server = require('../src/lib/tweet-orders/server.ts');
+let saved, saveError;
+server.db = () => ({ from(table) { assert.equal(table, 'tweet_x_credentials'); return { async upsert(value) { saved=value; return {error:saveError}; } }; } });
 const callback = require('../src/app/api/business/x/callback/route.ts');
 const exporter = require('../src/app/api/business/x/export/route.ts');
 const reader = require('../src/app/api/business/x/session/route.ts');
 const logout = require('../src/app/api/business/x/logout/route.ts');
 const origin = process.env.BUSINESS_APP_URL;
-const credentials = { type:'credentials',expires:Date.now()+600000,account:{id:'123',name:'Example',username:'example'},accessToken:'user-access',refreshToken:'user-refresh',tokenExpiresAt:new Date(Date.now()+7200000).toISOString(),scope:sessions.SCOPES.join(' ') };
+const credentials = { type:'credentials',expires:Date.now()+600000,account:{id:'123',name:'Example',username:'example'},accessToken:'user-access',refreshToken:'user-refresh',persisted:true,tokenExpiresAt:new Date(Date.now()+7200000).toISOString(),scope:sessions.SCOPES.join(' ') };
 function req(endpoint, method='POST', cookie='', requestOrigin=origin) {return new NextRequest(origin+'/api/business/x/'+endpoint,{method,headers:{host:new URL(origin).host,origin:requestOrigin,...(cookie?{cookie}:{})}});}
 function cookie(value,name=sessions.SESSION_COOKIE){return name+'='+sessions.sealSession(value);}
 test('encrypted cookies hide secrets, detect tampering, expire, and isolate purposes',()=>{
@@ -37,22 +40,17 @@ test('OAuth starts with PKCE, encrypted state, required scopes and no client sec
 });
 test('foreign-origin starts and exports are rejected',async()=>{
  assert.equal((await start.POST(req('start','POST','','https://evil.example'))).status,403);
- assert.equal((await exporter.POST(req('export','POST',cookie(credentials),'https://evil.example'))).status,403);
+ assert.equal((await exporter.POST(req('export','POST',cookie(credentials),'https://evil.example'))).status,410);
 });
 test('credentials cannot be exported without a valid session',async()=>{
- assert.equal((await exporter.POST(req('export'))).status,401);
- assert.equal((await exporter.POST(req('export','POST',cookie({...credentials,expires:Date.now()-1})))).status,401);
+ assert.equal((await exporter.POST(req('export'))).status,410);
+ assert.equal((await exporter.POST(req('export','POST',cookie({...credentials,expires:Date.now()-1})))).status,410);
 });
 test('session endpoint reveals account details but no token or app secret',async()=>{
  const response=await reader.GET(req('session','GET',cookie(credentials)));const data=await response.json();
  assert.equal(data.account.id,'123');assert.ok(!JSON.stringify(data).includes('user-refresh'));assert.ok(!JSON.stringify(data).includes('user-access'));assert.ok(!JSON.stringify(data).includes('example-app-secret'));
 });
-test('export includes user tokens and public client ID but never the app secret',async()=>{
- const response=await exporter.POST(req('export','POST',cookie(credentials)));const data=await response.json();
- assert.ok(data.env.includes('X_REFRESH_TOKEN="user-refresh"'));assert.ok(data.env.includes('X_ACCESS_TOKEN="user-access"'));assert.ok(!data.env.includes('X_CLIENT_SECRET'));assert.ok(!data.env.includes('example-app-secret'));
- const other={...credentials,account:{id:'456',name:'Other',username:'other'},refreshToken:'other-user-refresh'};
- const second=await (await exporter.POST(req('export','POST',cookie(other)))).json();assert.ok(second.env.includes('other-user-refresh'));assert.ok(!data.env.includes('other-user-refresh'));
-});
+test('old credential cookies cannot export tokens',async()=>{const r=await exporter.POST(req('export','POST',cookie(credentials)));assert.equal(r.status,410);assert.ok(!(await r.text()).includes('user-refresh'));});
 test('forged state and cancellation do not exchange tokens',async()=>{
  const original=global.fetch;global.fetch=async()=>{throw new Error('Network should not run');};
  try {
@@ -65,13 +63,23 @@ test('callback accepts the authenticated X account and binds returned credential
  const original=global.fetch;const flow={type:'oauth',expires:Date.now()+600000,state:'valid-state',verifier:'verifier'};
  global.fetch=async(url,init)=>{
   if(url.endsWith('/oauth2/token')){assert.equal(init.body.get('code_verifier'),'verifier');return Response.json({access_token:'account-access',refresh_token:'account-refresh',token_type:'bearer',expires_in:7200,scope:sessions.SCOPES.join(' ')});}
-  return Response.json({data:{id:'999',username:'any_user',name:'Any User'}});
+  return Response.json({data:{id:'999',username:'lumenless',name:'Any User'}});
  };
  try{const response=await callback.GET(new NextRequest(origin+'/api/business/x/callback?code=valid&state=valid-state',{headers:{cookie:cookie(flow,sessions.FLOW_COOKIE)}}));
-  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.equal(session.refreshToken,'account-refresh');
+  const session=sessions.openSession(response.cookies.get(sessions.SESSION_COOKIE)?.value,'credentials');assert.equal(session.account.id,'999');assert.equal(saved.refresh_token,'account-refresh');assert.equal(saved.id,1);assert.equal(session.persisted,true);assert.equal(session.refreshToken,undefined);assert.equal(session.accessToken,undefined);
   assert.equal(response.cookies.get(sessions.FLOW_COOKIE).value,'');assert.ok(!response.headers.get('location').includes('account-refresh'));
  }finally{global.fetch=original;}
 });
 test('logout clears the host-only temporary cookies',async()=>{
  const response=await logout.POST(req('logout','POST',cookie(credentials)));assert.equal(response.cookies.get(sessions.SESSION_COOKIE).value,'');assert.equal(response.cookies.get(sessions.SESSION_COOKIE).maxAge,0);
+});
+
+test('wrong accounts and database failures cannot connect the publisher',async()=>{
+ const original=global.fetch;const flow={type:'oauth',expires:Date.now()+600000,state:'valid',verifier:'v'};
+ try{for(const username of ['other','lumenless']){
+ saved=undefined;saveError=username==='lumenless'?{}:null;
+ global.fetch=async url=>url.endsWith('/oauth2/token')?Response.json({access_token:'a',refresh_token:'r',token_type:'bearer',expires_in:7200,scope:sessions.SCOPES.join(' ')}):Response.json({data:{id:'999',username,name:'Name'}});
+ const response=await callback.GET(new NextRequest(origin+'/api/business/x/callback?code=c&state=valid',{headers:{cookie:cookie(flow,sessions.FLOW_COOKIE)}}));
+ assert.equal(new URL(response.headers.get('location')).searchParams.get('error'),username==='other'?'wrong_account':'save_failed');assert.equal(response.cookies.get(sessions.SESSION_COOKIE),undefined);if(username==='other')assert.equal(saved,undefined);
+ }}finally{global.fetch=original;saveError=null;}
 });

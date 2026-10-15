@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { env, same } from '@/lib/tweet-orders/server';
+import { db, env, same } from '@/lib/tweet-orders/server';
 import { BusinessFlow, callbackUrl, FLOW_COOKIE, landingUrl, openSession, privateResponse, SCOPES, sealSession, SESSION_COOKIE, SESSION_TTL, sessionCookie } from '@/lib/business/session';
 
 export const runtime = 'nodejs';
@@ -24,14 +24,20 @@ export async function GET(request: NextRequest) {
     if (!userResponse.ok) throw new Error('account_lookup_failed');
     const { data } = await userResponse.json();
     if (!/^\d+$/.test(data?.id) || typeof data.username !== 'string' || typeof data.name !== 'string') throw new Error('account_lookup_failed');
+    if (data.username.toLowerCase() !== 'lumenless') throw new Error('wrong_account');
+    const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+    // The publisher owns refresh rotation; Business only replaces the connection after OAuth.
+    const { error: saveError } = await db().from('tweet_x_credentials').upsert({ id: 1,
+      access_token: tokens.access_token, refresh_token: tokens.refresh_token,
+      expires_at: tokenExpiresAt, lock_until: '1970-01-01' });
+    if (saveError) throw new Error('save_failed');
     const response = NextResponse.redirect(redirect);
     sessionCookie(response, SESSION_COOKIE, sealSession({ type: 'credentials', expires: Date.now() + SESSION_TTL * 1000,
-      account: { id: data.id, username: data.username, name: data.name }, accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token, tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(), scope: tokens.scope }), SESSION_TTL);
+      account: { id: data.id, username: data.username, name: data.name }, tokenExpiresAt, persisted: true }), SESSION_TTL);
     sessionCookie(response, FLOW_COOKIE, '', 0);
     return privateResponse(response);
   } catch (error) {
-    const allowed = ['invalid_session', 'access_denied', 'token_exchange_failed', 'missing_permissions', 'account_lookup_failed'];
+    const allowed = ['invalid_session', 'access_denied', 'token_exchange_failed', 'missing_permissions', 'account_lookup_failed', 'wrong_account', 'save_failed'];
     redirect.searchParams.set('error', error instanceof Error && allowed.includes(error.message) ? error.message : 'connection_failed');
     const response = NextResponse.redirect(redirect); sessionCookie(response, FLOW_COOKIE, '', 0);
     return privateResponse(response);
