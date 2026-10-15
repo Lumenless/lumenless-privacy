@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
-import { ArrowUpRight, Check, KeyRound, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, Check, KeyRound } from 'lucide-react';
 import PublishingSettings from './PublishingSettings';
 import TelegramSettings from './TelegramSettings';
 import { Button } from '@/components/ui/button';
@@ -62,7 +62,6 @@ export default function BusinessConnect() {
           <div className="mt-7 border-t border-border pt-6"><h3 className="text-sm font-medium">You’ll grant permission to</h3><ul className="mt-3 space-y-2 text-sm text-muted-foreground"><li>Read your account profile and posts</li><li>Publish posts and upload media</li><li>Renew access without signing in again</li></ul></div>
         </>}
         {busy && <p role="status" aria-live="polite" className="mt-4 text-sm text-primary">{busy}</p>}{error && <p role="alert" className="mt-5 rounded-xl border border-destructive/30 p-4 text-sm text-destructive">{error}</p>}
-        <div className="mt-7 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"><ShieldCheck size={16} className="mt-0.5 shrink-0" /><p>Tokens are stored in a private server database. They are never displayed or stored in browser local storage. Closing this session does not disconnect publishing.</p></div>
       </section>
     </main>
     <footer className="mx-auto max-w-6xl border-t border-border px-6 py-6 text-xs text-muted-foreground">Lumenless Business · X account connection</footer>
