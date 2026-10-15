@@ -4,8 +4,9 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Transaction, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { Check, Copy } from 'lucide-react';
 import parseTweet from 'twitter-text/dist/parseTweet';
-import { draftSchema, price, signingMessage, TweetOrder } from '@/lib/tweet-orders/model';
+import { draftSchema, LUMEN_MINT, price, signingMessage, TweetOrder } from '@/lib/tweet-orders/model';
 import { fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
 import { Button } from '@/components/ui/button';
 
@@ -18,6 +19,8 @@ export default function Home() {
   const [posts, setPosts] = useState<Post[]>([{ text: '', files: [] }]);
   const [email, setEmail] = useState(''); const [telegram, setTelegram] = useState('');
   const [terms, setTerms] = useState(false);
+  const [caCopied, setCaCopied] = useState(false);
+  useEffect(() => { if (!caCopied) return; const timer = setTimeout(() => setCaCopied(false), 2500); return () => clearTimeout(timer); }, [caCopied]);
   const [wallet, setWallet] = useState('');
   const providerRef = useRef<WalletProvider | null>(null);
   const focusReturn = useRef<HTMLElement | null>(null);
@@ -147,7 +150,7 @@ export default function Home() {
           {error && <p role="alert" className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</p>}{busy && <p role="status" className="mt-4 text-sm text-primary" aria-live="polite">{busy}</p>}
         </section>
         <aside className="space-y-6 lg:sticky lg:top-8"><section className="rounded-2xl border border-border p-6"><p className="text-sm text-muted-foreground">Your placement</p><div className="mt-4 flex items-center gap-3"><Image src="/logo.svg" alt="Lumenless" width={44} height={44} /><div><p className="font-semibold">Lumenless</p><p className="text-sm text-muted-foreground">@lumenless</p></div></div><p className="mt-5 whitespace-pre-wrap break-words text-sm leading-relaxed">{order?.tweets[0]?.text || posts[0].text || 'Your words will appear here. Make them count.'}</p><div className="mt-6 flex justify-between border-t border-border pt-5 text-sm"><span className="text-muted-foreground">{order?.kind || kind}</span><span className="font-semibold tabular-nums">{(order?.amount_tokens || price(kind)).toLocaleString('en-US')} LUMEN</span></div></section>
-          <section className="rounded-2xl bg-muted p-6"><Button className="h-12 w-full" disabled={!!busy || !!submitted || !!saved?.signature} onClick={() => run('Connecting wallet…', async () => { await connect(); })}>{wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : 'Connect Wallet'}</Button>{wallet && <button type="button" className="mt-2 min-h-10 w-full text-sm text-muted-foreground underline" disabled={!!busy || !!saved?.signature} onClick={() => { providerRef.current = null; setWallet(''); setQuote(null); run('Connecting wallet…', async () => { await connect(); }); }}>Change wallet</button>}<p className="mt-4 text-xs leading-relaxed text-muted-foreground">Pay with LUMEN automatically. If your balance is insufficient, we’ll offer a SOL quote.</p></section>
+          <section className="rounded-2xl bg-muted p-6"><Button className="h-12 w-full" disabled={!!busy || !!submitted || !!saved?.signature} onClick={() => run('Connecting wallet…', async () => { await connect(); })}>{wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : 'Connect Wallet'}</Button>{wallet && <button type="button" className="mt-2 min-h-10 w-full text-sm text-muted-foreground underline" disabled={!!busy || !!saved?.signature} onClick={() => { providerRef.current = null; setWallet(''); setQuote(null); run('Connecting wallet…', async () => { await connect(); }); }}>Change wallet</button>}<p className="mt-4 text-xs leading-relaxed text-muted-foreground">Pay with LUMEN automatically. If your balance is insufficient, we’ll offer a SOL quote.</p><div className="mt-5 border-t border-border pt-4"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium text-muted-foreground">LUMEN CA · Solana</span><button type="button" aria-label="Copy LUMEN contract address" onClick={async () => { try { await navigator.clipboard.writeText(LUMEN_MINT); setCaCopied(true); } catch { setError('Could not copy the address. Please select and copy it manually.'); } }} className="flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{caCopied ? <Check size={15} /> : <Copy size={15} />}<span aria-live="polite">{caCopied ? 'Copied' : 'Copy'}</span></button></div><p className="mt-1 select-all break-all font-mono text-xs leading-relaxed text-foreground">{LUMEN_MINT}</p></div></section>
           {config === null ? <p className="text-sm text-muted-foreground">Checking payment availability…</p> : !config.ready && <p role="status" className="rounded-xl border border-border p-4 text-sm text-muted-foreground">Checkout opens once the payment, X and Telegram integrations are configured.</p>}
         </aside>
       </div>
