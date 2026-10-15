@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     if (saveError) throw new Error('save_failed');
     const response = NextResponse.redirect(redirect);
     sessionCookie(response, SESSION_COOKIE, sealSession({ type: 'credentials', expires: Date.now() + SESSION_TTL * 1000,
-      account: { id: data.id, username: data.username, name: data.name }, tokenExpiresAt, persisted: true }), SESSION_TTL);
+      account: { id: data.id, username: data.username, name: data.name }, tokenExpiresAt, persisted: true, moderation: true }), SESSION_TTL);
     sessionCookie(response, FLOW_COOKIE, '', 0);
     return privateResponse(response);
   } catch (error) {

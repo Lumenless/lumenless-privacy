@@ -4,12 +4,12 @@ import { ApiError, env } from '../tweet-orders/server';
 
 export const FLOW_COOKIE = 'business-x-flow';
 export const SESSION_COOKIE = 'business-x-session';
-export const SESSION_TTL = 15 * 60;
+export const SESSION_TTL = 8 * 60 * 60;
 export const SCOPES = ['tweet.read', 'tweet.write', 'users.read', 'media.write', 'offline.access'];
 export type BusinessSession = {
   type: 'credentials'; expires: number;
   account: { id: string; username: string; name: string };
-  tokenExpiresAt: string; persisted: true;
+  tokenExpiresAt: string; persisted: true; moderation: true;
 };
 export type BusinessFlow = { type: 'oauth'; expires: number; state: string; verifier: string };
 

@@ -7,7 +7,8 @@ export function middleware(request: NextRequest) {
   const businessPath = path === '/business' || path.startsWith('/business/') || path.startsWith('/api/business/');
   if (!businessHost && !businessPath) return NextResponse.next();
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
-  const csp = `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`;
+  const mediaOrigin = (() => { try { return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '').origin; } catch { return ''; } })();
+  const csp = `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${mediaOrigin}; media-src 'self' ${mediaOrigin}; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`;
   const headers = new Headers(request.headers); headers.set('Content-Security-Policy', csp);
   let response: NextResponse;
   if (businessHost && path === '/') {

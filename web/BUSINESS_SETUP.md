@@ -13,3 +13,7 @@ The encrypted cookie contains only account and confirmation metadata, never toke
 Future registration for arbitrary accounts requires separate owner-scoped records, not this publisher singleton.
 
 Run npm run test:business, npm run test:tweet-orders and npm run build. Live OAuth requires the account owner to approve X access; tests never replace production credentials.
+
+## Moderation
+
+After OAuth, open /business/tweets on business.lumenless.com. The eight-hour, host-only HttpOnly session grants moderation only to the verified @lumenless account. Old export-only sessions must sign in again. All queue and action requests use /api/business/tweets, check the Business origin and privileged session; mutations additionally check the Origin header. Signing out clears access but leaves publisher credentials in the database. TWEET_ADMIN_TOKEN is no longer used and can be removed from Vercel. Legacy admin APIs return 410; /admin/tweets redirects to Business. Telegram notifications link to the Business queue. Existing SQL is sufficient.

@@ -22,13 +22,18 @@ export function checkOrigin(request: NextRequest) {
   const origin = `${url.protocol}//${request.headers.get('host') || url.host}`;
   if (request.headers.get('origin') !== origin) throw new ApiError('Invalid request origin.', 403);
 }
-export function requireAdmin(request: NextRequest) {
-  if (!same(request.headers.get('authorization') || '', `Bearer ${env('TWEET_ADMIN_TOKEN')}`))
-    throw new ApiError('Admin access required.', 401);
+export async function requireAdmin(request: NextRequest) {
+  const { businessOrigin, openSession, SESSION_COOKIE } = await import('../business/session');
+  const url = new URL(request.url);
+  const origin = `${url.protocol}//${request.headers.get('host') || url.host}`;
+  if (origin !== businessOrigin()) throw new ApiError('Use Lumenless Business to moderate orders.', 403);
+  const session = openSession<import('../business/session').BusinessSession>(request.cookies.get(SESSION_COOKIE)?.value, 'credentials');
+  if (!session?.moderation || !session.persisted || session.account.username.toLowerCase() !== 'lumenless')
+    throw new ApiError('Sign in to Business with @lumenless.', 401);
 }
 export async function order(id: string, request: NextRequest, admin = false) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new ApiError('Order not found.', 404);
-  if (admin) requireAdmin(request);
+  if (admin) await requireAdmin(request);
   const { data, error } = await db().from('tweet_orders').select('*').eq('id', id).maybeSingle();
   if (error) throw new ApiError('Could not load order.', 503);
   if (!data || (!admin && !same(hash(request.headers.get('x-order-token') || ''), data.token_hash)))
@@ -55,7 +60,7 @@ export async function notify(value: TweetOrder) {
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
     body: JSON.stringify({ chat_id: env('TELEGRAM_ADMIN_CHAT_ID'), text:
-      `New paid ${value.kind} for @lumenless\nOrder: ${value.id}\n${value.amount_tokens.toLocaleString('en-US')} LUMEN\n${env('APP_URL')}/admin/tweets`,
+      `New paid ${value.kind} for @lumenless\nOrder: ${value.id}\n${value.amount_tokens.toLocaleString('en-US')} LUMEN\n${env('BUSINESS_APP_URL')}/business/tweets`,
       link_preview_options: { is_disabled: true } }),
   });
   const result = await response.json();

@@ -22,7 +22,7 @@ const exporter = require('../src/app/api/business/x/export/route.ts');
 const reader = require('../src/app/api/business/x/session/route.ts');
 const logout = require('../src/app/api/business/x/logout/route.ts');
 const origin = process.env.BUSINESS_APP_URL;
-const credentials = { type:'credentials',expires:Date.now()+600000,account:{id:'123',name:'Example',username:'example'},accessToken:'user-access',refreshToken:'user-refresh',persisted:true,tokenExpiresAt:new Date(Date.now()+7200000).toISOString(),scope:sessions.SCOPES.join(' ') };
+const credentials = { type:'credentials',expires:Date.now()+600000,account:{id:'123',name:'Example',username:'example'},accessToken:'user-access',refreshToken:'user-refresh',persisted:true,moderation:true,tokenExpiresAt:new Date(Date.now()+7200000).toISOString(),scope:sessions.SCOPES.join(' ') };
 function req(endpoint, method='POST', cookie='', requestOrigin=origin) {return new NextRequest(origin+'/api/business/x/'+endpoint,{method,headers:{host:new URL(origin).host,origin:requestOrigin,...(cookie?{cookie}:{})}});}
 function cookie(value,name=sessions.SESSION_COOKIE){return name+'='+sessions.sealSession(value);}
 test('encrypted cookies hide secrets, detect tampering, expire, and isolate purposes',()=>{
@@ -47,7 +47,7 @@ test('credentials cannot be exported without a valid session',async()=>{
  assert.equal((await exporter.POST(req('export','POST',cookie({...credentials,expires:Date.now()-1})))).status,410);
 });
 test('session endpoint reveals account details but no token or app secret',async()=>{
- const response=await reader.GET(req('session','GET',cookie(credentials)));const data=await response.json();
+ const response=await reader.GET(req('session','GET',cookie({...credentials,account:{...credentials.account,username:'lumenless'}})));const data=await response.json();
  assert.equal(data.account.id,'123');assert.ok(!JSON.stringify(data).includes('user-refresh'));assert.ok(!JSON.stringify(data).includes('user-access'));assert.ok(!JSON.stringify(data).includes('example-app-secret'));
 });
 test('old credential cookies cannot export tokens',async()=>{const r=await exporter.POST(req('export','POST',cookie(credentials)));assert.equal(r.status,410);assert.ok(!(await r.text()).includes('user-refresh'));});
@@ -82,4 +82,25 @@ test('wrong accounts and database failures cannot connect the publisher',async()
  const response=await callback.GET(new NextRequest(origin+'/api/business/x/callback?code=c&state=valid',{headers:{cookie:cookie(flow,sessions.FLOW_COOKIE)}}));
  assert.equal(new URL(response.headers.get('location')).searchParams.get('error'),username==='other'?'wrong_account':'save_failed');assert.equal(response.cookies.get(sessions.SESSION_COOKIE),undefined);if(username==='other')assert.equal(saved,undefined);
  }}finally{global.fetch=original;saveError=null;}
+});
+
+test('moderation requires a current privileged X session on the Business origin',async()=>{
+ const adminReq=(value,url=origin)=>new NextRequest(url+'/api/business/tweets',{headers:{host:new URL(url).host,authorization:'Bearer old-admin-token',...(value?{cookie:cookie(value)}:{})}});
+ await assert.rejects(server.requireAdmin(adminReq()),e=>e.status===401);
+ await assert.rejects(server.requireAdmin(adminReq({...credentials,account:{...credentials.account,username:'other'}})),e=>e.status===401);
+ await assert.rejects(server.requireAdmin(adminReq({...credentials,account:{...credentials.account,username:'lumenless'},moderation:undefined})),e=>e.status===401);
+ const admin={...credentials,account:{...credentials.account,username:'lumenless'}};
+ await assert.rejects(server.requireAdmin(adminReq({...admin,expires:Date.now()-1})),e=>e.status===401);
+ await assert.rejects(server.requireAdmin(adminReq(admin,'https://lumenless.com')),e=>e.status===403);
+ await server.requireAdmin(adminReq(admin));
+});
+test('legacy admin endpoints cannot authorize with a bearer token',async()=>{
+ const legacy=require('../src/app/api/tweet-admin/route.ts');assert.equal((await legacy.GET()).status,410);assert.equal((await legacy.POST()).status,410);
+});
+test('moderation actions reject missing sessions and cross-origin requests before database access',async()=>{
+ const queue=require('../src/app/api/business/tweets/route.ts');
+ assert.equal((await queue.GET(req('tweets','GET'))).status,401);
+ const admin={...credentials,account:{...credentials.account,username:'lumenless'}};
+ assert.equal((await queue.POST(req('tweets','POST',cookie(admin),'https://evil.example'))).status,403);
+ assert.equal((await queue.POST(req('tweets'))).status,401);
 });
