@@ -180,3 +180,10 @@ test('refresh decrypts only its account token and persists the rotated pair encr
  global.fetch=async(url,init)=>{if(url.endsWith('/oauth2/token')){assert.equal(init.body.get('refresh_token'),'old-refresh');return response({access_token:'new-access',refresh_token:'new-refresh',expires_in:7200})}assert.equal(init.headers.Authorization,'Bearer new-access');return url.endsWith('/users/me')?response({data:{id:'777',username:'mike'}}):response({data:{id:'555'}});};
  try{await publish(row.id);assert.equal(row.status,'published');assert.ok(credentials.access_token.startsWith('xenc:v1:'));assert.equal(crypto.decryptToken(credentials.refresh_token,ctx('refresh_token')),'new-refresh');assert.equal(crypto.decryptToken(credentials.access_token,ctx('access_token')),'new-access');}finally{server.db=oldDb;global.fetch=oldFetch;if(oldId)process.env.X_CLIENT_ID=oldId;else delete process.env.X_CLIENT_ID;if(oldSecret)process.env.X_CLIENT_SECRET=oldSecret;else delete process.env.X_CLIENT_SECRET;}
 });
+
+test('X credit failures are actionable and stay retryable without an uncertain post',async()=>{
+ const row={...structuredClone(base),status:'approved'};const oldDb=server.db,oldFetch=global.fetch;server.db=mockDb(row);
+ global.fetch=async url=>url.endsWith('/users/me')?response({data:{id:'user',username:'lumenless'}}):response({type:'https://api.x.com/2/problems/credits-depleted'},402);
+ try{await assert.rejects(publish(row.id),/Check the app’s API credits/);assert.equal(row.status,'publish_failed');assert.equal(row.publish_attempt,null);assert.deepEqual(row.published_ids,[]);}
+ finally{server.db=oldDb;global.fetch=oldFetch;}
+});

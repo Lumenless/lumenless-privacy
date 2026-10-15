@@ -26,7 +26,11 @@ export default function BusinessTweets() {
   useEffect(() => { refresh().catch(err => setError(err instanceof Error ? err.message : 'Sign in to Business.')).finally(() => setLoading(false)); }, [refresh]);
 
   async function run(label: string, task: () => Promise<void>) { setBusy(label); setError(''); try { await task(); } catch (err) { setError(err instanceof Error ? err.message : 'Action failed.'); } finally { setBusy(''); } }
-  async function act(value: TweetOrder, action: string, extra = {}) { await api({ id: value.id, action, note: notes[value.id] || '', ...extra }); await refresh(); }
+  async function act(value: TweetOrder, action: string, extra = {}) {
+    try { await api({ id: value.id, action, note: notes[value.id] || '', ...extra }); }
+    catch (error) { try { await refresh(); } catch { /* Preserve the original action error. */ } throw error; }
+    await refresh();
+  }
   async function refund(value: TweetOrder) {
     const provider = walletProvider(wallet); const account = await provider.connect();
     if (account.publicKey.toBase58() !== treasury) throw new Error('Connect the LUMEN treasury wallet to sign the refund.');

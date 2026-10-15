@@ -43,7 +43,10 @@ async function xFetch(path: string, token: string, init: RequestInit = {}, post 
   let response: Response;
   try { response = await fetch(`https://api.x.com/2${path}`, { ...init, signal: AbortSignal.timeout(20_000), headers: { Authorization: `Bearer ${token}`, ...init.headers } }); }
   catch { throw new XError('X did not return a response. Check the publication before retrying.', post); }
-  if (!response.ok) throw new XError(`X request failed (HTTP ${response.status}).`, post && (response.status >= 500 || response.status === 408));
+  if (!response.ok) {
+    if (response.status === 402) throw new XError('X API payment required (HTTP 402). Check the app’s API credits in X Developer Console, add credits, then retry publication.');
+    throw new XError(`X request failed (HTTP ${response.status}).`, post && (response.status >= 500 || response.status === 408));
+  }
   if (response.status === 204 || response.headers.get('content-length') === '0') return {};
   try { return await response.json(); } catch { if (post) throw new XError('X returned an unreadable publication result.', true); return {}; }
 }
