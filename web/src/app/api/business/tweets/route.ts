@@ -1,3 +1,4 @@
+import { canRejectWithoutRefund } from '@/lib/business/moderation-policy';
 import { NextRequest, NextResponse } from 'next/server';
 import { Transaction } from '@solana/web3.js';
 import { ApiError, checkOrigin, db, failure, hash, notify, order, requireAdmin, withMedia } from '@/lib/tweet-orders/server';
@@ -16,14 +17,15 @@ export async function GET(request: NextRequest) {
     query = session.account.username.toLowerCase() === 'lumenless' ? query.or(`target_x_user_id.eq.${session.account.id},and(target_x_user_id.is.null,target_username.eq.lumenless)`) : query.eq('target_x_user_id', session.account.id);
     const { data, error } = await query.order('created_at', { ascending: false }).limit(100);
     if (error) throw new ApiError('Could not load moderation queue.', 503);
-    return NextResponse.json({ orders: await Promise.all((data || []).map(withMedia)) });
+    return NextResponse.json({ canRejectWithoutRefund: canRejectWithoutRefund(session.account.id), orders: await Promise.all((data || []).map(withMedia)) });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {
   try {
-    checkOrigin(request); await requireAdmin(request);
+    checkOrigin(request); const session = await requireAdmin(request);
     const body = await request.json();
     if (typeof body.action !== 'string') throw new ApiError('Action is required.');
+    if (body.action === 'reject' && !canRejectWithoutRefund(session.account.id)) throw new ApiError('Rejections for this account require a refund. Use Reject with refund.', 403);
     if (typeof body.id !== 'string') throw new ApiError('Order ID is required.');
     const value = await order(body.id, request, true);
     if (value.refund_reason === 'review_timeout' && ['escrow-prepare','escrow-broadcast','escrow-reset'].includes(body.action)) throw new ApiError('Only the paying wallet can manage this timeout refund.',403);
