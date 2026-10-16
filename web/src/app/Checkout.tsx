@@ -193,7 +193,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
       <p className="mb-5 text-sm text-muted-foreground">Choose your Solana wallet.</p><div className="space-y-3">{WALLET_NAMES.map(name => <Button key={name} variant="outline" className="h-12 w-full justify-start" disabled={selectingWallet} onClick={() => selectWallet(name)}>{name}</Button>)}</div>
       {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
     </dialog>
-    <footer className="mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-border px-6 py-6 text-xs text-muted-foreground"><span>© {new Date().getFullYear()} Lumenless</span><div className="flex gap-6"><a href="/privacypolicy">Privacy</a><a href="/admin/tweets">Admin</a></div></footer>
+    <footer className="mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-border px-6 py-6 text-xs text-muted-foreground"><span>© {new Date().getFullYear()} Lumenless</span><div className="flex gap-6"><a href="/privacypolicy">Privacy</a></div></footer>
   </div>;
 }
 
