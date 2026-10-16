@@ -10,16 +10,17 @@ import { draftSchema, signingMessage, TweetOrder } from '@/lib/tweet-orders/mode
 import { WALLET_NAMES, authorizeOrderMessage, fromBase64, jsonRequest, toBase64, walletProvider, WalletProvider } from '@/lib/tweet-orders/wallet';
 import { DEFAULT_BILLING, type Billing, orderTerms, termsFor, displayAmount } from '@/lib/tweet-orders/billing';
 import { Button } from '@/components/ui/button';
+import MyOrders from './MyOrders';
+import { migrateOrderHistory, saveOrderHistory, type Recovery } from '@/lib/tweet-orders/order-history';
 
 type Post = { text: string; files: File[] };
-type Recovery = { id: string; token: string; signature?: string; raw?: string; swapComplete?: boolean };
 const field = 'w-full rounded-xl border border-input bg-background px-4 py-3 focus-visible:outline-2 focus-visible:outline-primary';
 export default function Checkout({ username = 'lumenless' }: { username?: string }) {
-  const storage = `lumenless-tweet-order:${username}`;
   const [kind, setKind] = useState<'tweet' | 'thread'>('tweet');
   const [posts, setPosts] = useState<Post[]>([{ text: '', files: [] }]);
   const [email, setEmail] = useState(''); const [telegram, setTelegram] = useState('');
   const [terms, setTerms] = useState(false);
+  const parkedDraft=useRef<{kind:'tweet'|'thread';posts:Post[];terms:boolean}|null>(null);
   const [caCopied, setCaCopied] = useState(false);
   useEffect(() => { if (!caCopied) return; const timer = setTimeout(() => setCaCopied(false), 2500); return () => clearTimeout(timer); }, [caCopied]);
   const [wallet, setWallet] = useState('');
@@ -30,6 +31,9 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   const [selectingWallet, setSelectingWallet] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => { if (walletPicker) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [walletPicker]);
+  const [history,setHistory] = useState<Recovery[]>([]);
+  const [ordersOpen,setOrdersOpen] = useState(false);
+  const [lastSubmitted,setLastSubmitted] = useState<string|null>(null);
   const [saved, setSaved] = useState<Recovery | null>(null);
   const [order, setOrder] = useState<TweetOrder | null>(null);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -37,16 +41,26 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   const [busy, setBusy] = useState(''); const [error, setError] = useState('');
   useEffect(() => { if (!walletPicker && !busy && focusReturn.current) { const target = focusReturn.current; focusReturn.current = null; if (target.isConnected) target.focus(); } }, [walletPicker, busy]);
   const [quote, setQuote] = useState<{ transaction: string; inLamports: string; networkFeeLamports: number } | null>(null);
-  function remember(value: Recovery) { setSaved(value); localStorage.setItem(storage, JSON.stringify(value)); }
+  function remember(value: Recovery) {
+    setHistory(saveOrderHistory(localStorage,username,value));
+    setSaved(value);
+  }
+  function resetCheckout(){const draft=parkedDraft.current;parkedDraft.current=null;setSaved(null);setOrder(null);setQuote(null);setPosts(draft?.posts||[{text:'',files:[]}]);setKind(draft?.kind||'tweet');setTerms(draft?.terms||false);setError('');}
+  function acceptOrder(result:TweetOrder){
+    if(result.status==='awaiting_payment'){setOrder(result);setKind(result.kind);return;}
+    resetCheckout();setLastSubmitted(result.id);setOrdersOpen(true);
+  }
   async function load(value: Recovery) {
-    const result = await jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) });
-    setOrder(result); if (value.raw && !result.payment_signature) action(value, { action: 'inspect-payment', signedTransaction: value.raw }).catch((err: Error) => setError(err.message)); if (result.payment_signed_signature && !value.signature) remember({ ...value, signature: result.payment_signed_signature }); return result as TweetOrder;
+    const result = await jsonRequest(`/api/tweet-orders/${value.id}`, { cache:'no-store',headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) });
+    if(value.raw&&!result.payment_signature)action(value,{action:'inspect-payment',signedTransaction:value.raw}).catch((err:Error)=>setError(err.message));
+    if(result.payment_signed_signature&&!value.signature)remember({...value,signature:result.payment_signed_signature});
+    acceptOrder(result);return result as TweetOrder;
   }
   useEffect(() => {
     jsonRequest(`/api/tweet-orders/config?username=${encodeURIComponent(username)}`).then(setConfig).catch(() => setError('Could not check payment availability. Reload this page.'));
-    const previous = localStorage.getItem(storage) || (username === 'lumenless' ? localStorage.getItem('lumenless-tweet-order') : null);
-    if (previous) { try { const value = JSON.parse(previous); setSaved(value); jsonRequest(`/api/tweet-orders/${value.id}`, { headers: { 'x-order-token': value.token }, signal: AbortSignal.timeout(25_000) }).then(result => { setOrder(result); if (value.raw && !result.payment_signature) action(value, { action: 'inspect-payment', signedTransaction: value.raw }).catch((err: Error) => setError(err.message)); if (result.payment_signed_signature && !value.signature) { const recovered = { ...value, signature: result.payment_signed_signature }; setSaved(recovered); localStorage.setItem(storage, JSON.stringify(recovered)); } }).catch((err: Error) => setError(err.message)); } catch { localStorage.removeItem(storage); } }
-  }, [storage, username]);
+    try{setHistory(migrateOrderHistory(localStorage,username));}catch{setError('Could not load order history. Check that browser storage is available.');}
+    // Saved orders are available in My orders; never replace a new post on page load.
+  }, [username]);
   async function run(label: string, task: () => Promise<void>) {
     setBusy(label); setError(''); try { await task(); } catch (err) { if (!(err instanceof Error && err.message === 'Wallet connection cancelled.')) setError(err instanceof Error ? err.message : 'Something went wrong. Retry.'); } finally { setBusy(''); }
   }
@@ -70,6 +84,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   }
   async function checkout(value: Recovery) {
     const provider = await connect(); const current = await load(value);
+    if(current.status!=='awaiting_payment')return;
     if (provider.publicKey!.toBase58() !== current.wallet) throw new Error('Connect the wallet that created this order.');
     if (current.payment_signed_signature) throw new Error('Verify the existing payment before paying again.');
     setQuote(null); setBusy('Checking wallet balance…');
@@ -83,6 +98,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   }
   async function create() {
     if (!config?.billing) throw new Error('Reload pricing before creating an order.');
+    setLastSubmitted(null);
     const provider = await connect();
     const parsed = draftSchema.safeParse({ wallet: provider.publicKey!.toBase58(), kind, targetUsername: username, paymentTerms: termsFor(config.billing, kind),
       tweets: posts.map(post => ({ text: post.text, media: post.files.map(file => ({ name: file.name, type: file.type, size: file.size })) })), email, telegram, acceptedTerms: terms });
@@ -106,6 +122,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   async function pay(value: Recovery) {
     if (value.signature) throw new Error('Verify the saved payment before signing another transaction.');
     const provider = await connect(); const current = await load(value);
+    if(current.status!=='awaiting_payment')return;
     if (provider.publicKey!.toBase58() !== current.wallet) throw new Error('Connect the wallet that created this order.');
     const prepared = await action(value, { action: 'prepare' });
     setBusy('Open your wallet to review and sign the payment…');
@@ -115,7 +132,7 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
     await action(pending, { action: 'broadcast', signedTransaction: pending.raw });
     setBusy('Waiting for final confirmation…');
     for (let attempt = 0; attempt < 12; attempt++) {
-      try { setOrder(await action(pending, { action: 'verify', signature: pending.signature })); return; }
+      try { acceptOrder(await action(pending, { action: 'verify', signature: pending.signature })); return; }
       catch (err) { if (!(err instanceof Error) || !err.message.includes('not finalized')) throw err; await new Promise(resolve => setTimeout(resolve, 2500)); }
     }
     throw new Error('Payment sent. Use Verify payment in a moment; no second payment is needed.');
@@ -132,28 +149,23 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
   const selectedTerms = order ? orderTerms(order) : termsFor(config?.billing || DEFAULT_BILLING, kind);
   const singleTweetTerms = termsFor(config?.billing || DEFAULT_BILLING, 'tweet');
   const singleTweetPrice = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(Number(singleTweetTerms.amount));
-  const submitted = order && order.status !== 'awaiting_payment';
-  function discard() { localStorage.removeItem(storage); if (username === 'lumenless') localStorage.removeItem('lumenless-tweet-order'); setSaved(null); setOrder(null); setQuote(null); }
+  function discard(){resetCheckout();}
+  function resume(value:Recovery){if(!saved)parkedDraft.current={kind,posts,terms};setOrdersOpen(false);void run('Loading your order…',async()=>{remember(value);await load(value);document.getElementById('create-order')?.scrollIntoView({block:'start'});});}
   return <div className="min-h-screen bg-background text-foreground">
     <header className="mx-auto flex max-w-6xl items-center justify-between border-b border-border px-6 py-6">
       <Link href="/" className="flex items-center gap-3 text-xl font-semibold"><Image src="/logo.svg" alt="" width={34} height={34} />lumenless</Link>
-      <a href={`https://x.com/${username}`} target="_blank" rel="noreferrer" className="flex min-h-10 items-center text-sm text-muted-foreground hover:text-primary">@{username} ↗</a>
+      <nav className="flex items-center gap-4" aria-label="Account and orders"><a href={`https://x.com/${username}`} target="_blank" rel="noreferrer" className="hidden min-h-10 items-center text-sm text-muted-foreground hover:text-primary sm:flex">@{username} ↗</a><Button id="my-orders-trigger" variant="outline" className="min-h-10" disabled={!!busy} onClick={()=>setOrdersOpen(true)}>My orders{history.length>0?` (${history.length})`:''}</Button></nav>
     </header>
-    <main className="mx-auto max-w-6xl px-6 py-12 md:py-20">
-      <div className="mb-6 flex justify-end"><Link href="/orders" className="text-sm text-primary underline">Check order status</Link></div><div className="mb-12 max-w-3xl">{username === 'lumenless' ? <>
+    <main className="mx-auto max-w-6xl px-6 py-8 md:py-10">
+      <div className="mb-8 max-w-3xl">{username === 'lumenless' ? <>
         <p className="mb-4 text-sm font-medium uppercase tracking-widest text-primary">Your story. The Lumenless audience.</p>
-        <h1 className="text-4xl font-semibold tracking-tight md:text-6xl">Tell the world about you.<br /><span className="text-primary">On @lumenless.</span></h1>
-        <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">Have a project to launch, a story to share, or something you want people to discover? Put it on the Lumenless X page.</p>
-        <p className="mt-5 text-xl font-semibold">Just {singleTweetPrice} {singleTweetTerms.symbol} per tweet.</p>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">Write your post, add photos or a video, and submit it for review. We publish approved posts to @lumenless.{singleTweetTerms.asset === 'SPL' ? ' Pay with '+singleTweetTerms.symbol+' or SOL.' : ' Pay with '+singleTweetTerms.symbol+'.'}</p>
-        <div className="mt-8 flex flex-col items-start gap-4 rounded-2xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="font-medium">Have your own X audience?</p><p className="mt-1 text-sm text-muted-foreground">Sell paid tweets and threads on your account.</p></div>
-          <Button asChild className="h-12 w-full rounded-xl px-6 sm:w-auto"><a href="https://business.lumenless.com/">Earn with your X</a></Button>
-        </div>
-      </> : <><p className="mb-4 text-sm font-medium uppercase tracking-widest text-primary">Your voice. Our timeline.</p><h1 className="text-4xl font-semibold tracking-tight md:text-6xl">Put your next idea<br />on <span className="text-primary">@{username}.</span></h1><p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">Write a tweet or a thread. Pay with {selectedTerms.symbol}{selectedTerms.asset === 'SPL' ? ' or SOL' : ''}. We review it, then publish it to @{username}.</p></>}</div>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl md:text-5xl">Tell the world about you.<br /><span className="text-primary">On @lumenless.</span></h1>
+        <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">Share yourself, your project, or your next launch with the Lumenless audience on X.</p>
+        <div className="mt-5 flex flex-wrap items-center gap-4"><Button asChild className="h-12 rounded-xl px-6"><a href="#create-order">Buy a tweet</a></Button><p className="font-semibold">Just {singleTweetPrice} {singleTweetTerms.symbol} per tweet.</p></div>
+      </> : <><p className="mb-4 text-sm font-medium uppercase tracking-widest text-primary">Your voice. Our timeline.</p><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl md:text-5xl">Put your next idea<br />on <span className="text-primary">@{username}.</span></h1><p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">Write a tweet or a thread. Pay with {selectedTerms.symbol}{selectedTerms.asset === 'SPL' ? ' or SOL' : ''}. We review it, then publish it to @{username}.</p></>}</div>
       <div className="grid items-start gap-8 lg:grid-cols-[1fr_360px]">
-        <section className="rounded-2xl border border-border bg-card p-5 md:p-8" aria-label="Tweet composer" aria-busy={!!busy}>
-          {submitted ? <div className="space-y-5"><p className="text-sm font-medium text-primary">ORDER RECEIVED</p><h2 className="text-2xl font-semibold capitalize">{order.status.replaceAll('_', ' ')}</h2><p className="text-muted-foreground">Your payment is confirmed. Your content is in our moderation workflow.</p>{order.review_note && <p className="rounded-xl bg-muted p-4">{order.review_note}</p>}{order.published_url && <a href={order.published_url} target="_blank" rel="noreferrer" className="text-primary underline">View your post on X ↗</a>}{order.status==='pending_review'&&order.escrow_account_id&&<p className="text-sm text-muted-foreground">If no approval or rejection is made within 72 hours of payment confirmation, you can claim a full refund from the order status page.</p>}<p className="break-all text-sm text-muted-foreground">Order {order.id}</p><div className="flex flex-wrap gap-3"><Button disabled={!!busy} onClick={() => run('Refreshing…', async () => { await load(saved!); })}>Refresh status</Button><Link href={`/orders?id=${order.id}`} className="inline-flex min-h-10 items-center rounded-xl border border-border px-4 text-sm font-medium text-primary">Track order</Link><Button variant="outline" onClick={discard}>Create another order</Button></div></div> : <>
+        <section id="create-order" tabIndex={-1} className="scroll-mt-6 rounded-2xl border border-border bg-card p-5 focus-visible:outline-2 focus-visible:outline-primary md:p-8" aria-label="Tweet composer" aria-busy={!!busy}>
+          {lastSubmitted&&!saved&&<div role="status" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl bg-primary/5 p-4 text-sm"><p>Payment confirmed. Your order is saved in My orders.</p><Button variant="outline" className="min-h-10" onClick={()=>setOrdersOpen(true)}>View my orders</Button></div>}
             <div className="mb-7 flex items-center justify-between"><h2 className="text-xl font-semibold">Create your post</h2><span className="text-sm text-muted-foreground">01 / Compose</span></div>
             <fieldset disabled={!!saved || !!busy} className="mb-6 grid grid-cols-2 gap-3"><legend className="sr-only">Post format</legend>{(['tweet', 'thread'] as const).map(value => <label key={value} className={`cursor-pointer rounded-xl border p-4 ${kind === value ? 'border-primary bg-primary/5' : 'border-border'}`}><input type="radio" name="kind" checked={kind === value} onChange={() => { setKind(value); setPosts(value === 'tweet' ? [posts[0]] : posts.length < 2 ? [...posts, { text: '', files: [] }] : posts); }} className="mr-2" /><span className="font-medium">{value === 'tweet' ? 'Single tweet' : 'Thread'}</span><p className="mt-1 text-sm text-muted-foreground">{config?.billing ? displayAmount(termsFor(config.billing, value).amount) + ' ' + config.billing.payment_symbol : 'Loading price…'}</p></label>)}</fieldset>
             {saved && order ? <div className="mb-6 space-y-4">{order.tweets.map((post, index) => <div key={index} className="rounded-xl border border-border p-4"><p className="mb-2 text-xs text-muted-foreground">Tweet {index + 1}</p><p className="whitespace-pre-wrap break-words">{post.text}</p>{post.media.map(file => <p key={file.path} className="mt-2 text-xs text-muted-foreground">Attachment: {file.name}</p>)}</div>)}</div> : <form onSubmit={event => { event.preventDefault(); run('Preparing your order…', create); }}>
@@ -165,16 +177,17 @@ export default function Checkout({ username = 'lumenless' }: { username?: string
               </fieldset>
               <Button type="submit" className="mt-6 h-12 w-full" disabled={!!saved || !!busy || !terms || !config?.ready}>{busy || 'Continue to payment'}</Button>
             </form>}
-            {saved && <div className="mt-6 space-y-4 rounded-xl bg-muted p-4"><p className="font-medium">Content saved. Complete your payment.</p><p className="text-sm text-muted-foreground">Your order enters review after payment is confirmed.</p>{saved.signature ? <><p className="break-all text-xs">Payment: {saved.signature}</p><Button disabled={!!busy} onClick={() => run('Verifying payment…', async () => { setOrder(await action(saved, { action: 'verify', signature: saved.signature })); })}>Verify payment</Button><Button variant="outline" disabled={!!busy || !saved.raw} onClick={() => run('Resending the same transaction…', async () => { await action(saved, { action: 'broadcast', signedTransaction: saved.raw }); })}>Resend same transaction</Button><Button variant="outline" disabled={!!busy} onClick={() => run('Checking failed payment…', async () => { await action(saved, { action: 'reset-payment' }); remember({ id: saved.id, token: saved.token, swapComplete: saved.swapComplete }); await load({ id: saved.id, token: saved.token }); })}>Reset failed or expired payment</Button></> : <>{quote && <div className="space-y-2"><p className="text-sm">Not enough {selectedTerms.symbol}. Pay with SOL instead.</p><p className="font-medium">{(Number(quote.inLamports) / 1e9).toFixed(9)} SOL <span className="font-normal text-muted-foreground">+ approximately {(quote.networkFeeLamports / 1e9).toFixed(6)} SOL fees</span></p><p className="text-xs text-muted-foreground">Approve the SOL swap, then the {selectedTerms.symbol} payment in your wallet. Extra tokens stay in your wallet.</p></div>}<Button disabled={!!busy} onClick={() => run(quote ? 'Swapping SOL to LUMEN…' : 'Checking payment options…', () => quote ? swap(saved) : checkout(saved))}>{quote ? 'Confirm SOL payment' : 'Pay now'}</Button>{quote && <Button variant="outline" disabled={!!busy} onClick={() => run('Refreshing payment options…', () => checkout(saved))}>Refresh quote</Button>}</>}{!saved.signature && <button type="button" disabled={!!busy} className="block min-h-10 text-sm text-muted-foreground underline" onClick={discard}>Discard unpaid order and edit content</button>}</div>}
-          </>}
+            {saved && <div className="mt-6 space-y-4 rounded-xl bg-muted p-4"><p className="font-medium">Content saved. Complete your payment.</p><p className="text-sm text-muted-foreground">Your order enters review after payment is confirmed.</p>{saved.signature ? <><p className="break-all text-xs">Payment: {saved.signature}</p><Button disabled={!!busy} onClick={() => run('Verifying payment…', async () => { acceptOrder(await action(saved, { action: 'verify', signature: saved.signature })); })}>Verify payment</Button><Button variant="outline" disabled={!!busy || !saved.raw} onClick={() => run('Resending the same transaction…', async () => { await action(saved, { action: 'broadcast', signedTransaction: saved.raw }); })}>Resend same transaction</Button><Button variant="outline" disabled={!!busy} onClick={() => run('Checking failed payment…', async () => { await action(saved, { action: 'reset-payment' }); remember({ id: saved.id, token: saved.token, swapComplete: saved.swapComplete }); await load({ id: saved.id, token: saved.token }); })}>Reset failed or expired payment</Button></> : <>{quote && <div className="space-y-2"><p className="text-sm">Not enough {selectedTerms.symbol}. Pay with SOL instead.</p><p className="font-medium">{(Number(quote.inLamports) / 1e9).toFixed(9)} SOL <span className="font-normal text-muted-foreground">+ approximately {(quote.networkFeeLamports / 1e9).toFixed(6)} SOL fees</span></p><p className="text-xs text-muted-foreground">Approve the SOL swap, then the {selectedTerms.symbol} payment in your wallet. Extra tokens stay in your wallet.</p></div>}<Button disabled={!!busy} onClick={() => run(quote ? 'Swapping SOL to LUMEN…' : 'Checking payment options…', () => quote ? swap(saved) : checkout(saved))}>{quote ? 'Confirm SOL payment' : 'Pay now'}</Button>{quote && <Button variant="outline" disabled={!!busy} onClick={() => run('Refreshing payment options…', () => checkout(saved))}>Refresh quote</Button>}</>}{<button type="button" disabled={!!busy} className="block min-h-10 text-sm text-muted-foreground underline" onClick={discard}>Save for later & start a new order</button>}</div>}
           {error && <p role="alert" className="mt-5 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</p>}{busy && <p role="status" className="mt-4 text-sm text-primary" aria-live="polite">{busy}</p>}
         </section>
         <aside className="space-y-6 lg:sticky lg:top-8"><section className="rounded-2xl border border-border p-6"><p className="text-sm text-muted-foreground">Your placement</p><div className="mt-4 flex items-center gap-3"><span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-lg font-semibold text-primary">{config?.account?.profile_image_url && !avatarFailed ? <Image unoptimized src={config.account.profile_image_url} alt={`@${username}`} width={44} height={44} referrerPolicy="no-referrer" onError={() => setAvatarFailed(true)} className="size-11 rounded-full object-cover" /> : username === 'lumenless' ? <Image src="/logo.svg" alt="Lumenless" width={44} height={44} /> : username.slice(0, 2).toUpperCase()}</span><div><p className="font-semibold">{config?.account?.name || (username === 'lumenless' ? 'Lumenless' : username)}</p><p className="text-sm text-muted-foreground">@{username}</p></div></div><p className="mt-5 whitespace-pre-wrap break-words text-sm leading-relaxed">{order?.tweets[0]?.text || posts[0].text || 'Your words will appear here. Make them count.'}</p><div className="mt-6 flex justify-between border-t border-border pt-5 text-sm"><span className="text-muted-foreground">{order?.kind || kind}</span><span className="font-semibold tabular-nums">{displayAmount(selectedTerms.amount)} {selectedTerms.symbol}</span></div></section>
-          <section className="rounded-2xl bg-muted p-6"><Button className="h-12 w-full" disabled={!!busy || !!submitted || !!saved?.signature} onClick={() => run('Connecting wallet…', async () => { await connect(); })}>{wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : 'Connect Wallet'}</Button>{wallet && <button type="button" className="mt-2 min-h-10 w-full text-sm text-muted-foreground underline" disabled={!!busy || !!saved?.signature} onClick={() => { providerRef.current = null; setWallet(''); setQuote(null); run('Connecting wallet…', async () => { await connect(); }); }}>Change wallet</button>}<p className="mt-4 text-xs leading-relaxed text-muted-foreground">Pay with {selectedTerms.symbol}.{selectedTerms.asset === 'SPL' ? ' If your balance is insufficient, we’ll offer a SOL quote.' : ''}</p>{selectedTerms.mint && <div className="mt-5 border-t border-border pt-4"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium text-muted-foreground">{selectedTerms.symbol} CA · Solana</span><button type="button" aria-label="Copy payment token mint address" onClick={async () => { try { await navigator.clipboard.writeText(selectedTerms.mint!); setCaCopied(true); } catch { setError('Could not copy the address. Please select and copy it manually.'); } }} className="flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{caCopied ? <Check size={15} /> : <Copy size={15} />}<span aria-live="polite">{caCopied ? 'Copied' : 'Copy'}</span></button></div><p className="mt-1 select-all break-all font-mono text-xs leading-relaxed text-foreground">{selectedTerms.mint}</p></div>}</section>
+          <section className="rounded-2xl bg-muted p-6"><Button className="h-12 w-full" disabled={!!busy || !!saved?.signature} onClick={() => run('Connecting wallet…', async () => { await connect(); })}>{wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : 'Connect Wallet'}</Button>{wallet && <button type="button" className="mt-2 min-h-10 w-full text-sm text-muted-foreground underline" disabled={!!busy || !!saved?.signature} onClick={() => { providerRef.current = null; setWallet(''); setQuote(null); run('Connecting wallet…', async () => { await connect(); }); }}>Change wallet</button>}<p className="mt-4 text-xs leading-relaxed text-muted-foreground">Pay with {selectedTerms.symbol}.{selectedTerms.asset === 'SPL' ? ' If your balance is insufficient, we’ll offer a SOL quote.' : ''}</p>{selectedTerms.mint && <div className="mt-5 border-t border-border pt-4"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium text-muted-foreground">{selectedTerms.symbol} CA · Solana</span><button type="button" aria-label="Copy payment token mint address" onClick={async () => { try { await navigator.clipboard.writeText(selectedTerms.mint!); setCaCopied(true); } catch { setError('Could not copy the address. Please select and copy it manually.'); } }} className="flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-primary">{caCopied ? <Check size={15} /> : <Copy size={15} />}<span aria-live="polite">{caCopied ? 'Copied' : 'Copy'}</span></button></div><p className="mt-1 select-all break-all font-mono text-xs leading-relaxed text-foreground">{selectedTerms.mint}</p></div>}</section>
           {config === null ? <p className="text-sm text-muted-foreground">Checking payment availability…</p> : !config.ready && <p role="status" className="rounded-xl border border-border p-4 text-sm text-muted-foreground">This account must finish its pricing, receiving wallet and escrow setup before accepting new orders.</p>}
         </aside>
       </div>
+      {username==='lumenless'&&<section className="mt-10 flex flex-col items-start gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-medium">Have your own X audience?</h2><p className="mt-1 text-sm text-muted-foreground">Sell paid tweets and threads on your account.</p></div><Button asChild variant="outline" className="min-h-10"><a href="https://business.lumenless.com/">Earn with your X</a></Button></section>}
     </main>
+    <MyOrders open={ordersOpen} records={history} onClose={()=>setOrdersOpen(false)} onResume={resume} onNewOrder={()=>{if(saved)resetCheckout();setOrdersOpen(false);document.getElementById('create-order')?.scrollIntoView({block:'start'});}}/>
     <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); closeWalletPicker(); }} onClick={event => { if (event.target === event.currentTarget) closeWalletPicker(); }} aria-labelledby="wallet-dialog-title" className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-sm rounded-2xl border border-border bg-background p-6 text-foreground shadow-xl backdrop:bg-black/40">
       <div className="mb-5 flex items-center justify-between"><h2 id="wallet-dialog-title" className="text-xl font-semibold">Connect Wallet</h2><Button variant="ghost" aria-label="Close wallet selection" onClick={closeWalletPicker}>✕</Button></div>
       <p className="mb-5 text-sm text-muted-foreground">Choose your Solana wallet.</p><div className="space-y-3">{WALLET_NAMES.map(name => <Button key={name} variant="outline" className="h-12 w-full justify-start" disabled={selectingWallet} onClick={() => selectWallet(name)}>{name}</Button>)}</div>
